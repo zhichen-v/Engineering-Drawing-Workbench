@@ -1,0 +1,6 @@
+.venv/
+.codegraph/
+__pycache__/
+.pytest_cache/
+output/
+frontend/node_modules/
