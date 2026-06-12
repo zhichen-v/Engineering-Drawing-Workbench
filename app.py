@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
-import secrets
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -93,14 +93,24 @@ def create_job(request: JobRequest) -> dict[str, object]:
     snapshot = render_page(request.document, request.page)
     image = Image.open(io.BytesIO(snapshot))
 
-    job_id = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}_{secrets.token_hex(4)}"
+    document_stem = Path(request.document).stem
+    safe_document_stem = "".join(
+        character if character.isalnum() or character in "-_" else "_"
+        for character in document_stem
+    ).strip("_") or "document"
+    document_hash = hashlib.sha256(request.document.encode("utf-8")).hexdigest()[:8]
+    job_id = f"{safe_document_stem}_{document_hash}_page_{request.page:03d}"
     job_dir = OUTPUT_DIR / job_id
-    job_dir.mkdir()
+    job_dir.mkdir(exist_ok=True)
     (job_dir / "snapshot.png").write_bytes(snapshot)
+
+    if request.action == "crop":
+        for crop_path in job_dir.glob("crop_*.png"):
+            crop_path.unlink()
 
     saved_boxes = []
     result_files = [f"/output/{job_id}/snapshot.png"]
-    for index, box in enumerate(request.boxes, start=1):
+    for box in request.boxes:
         left = max(0, min(round(box.x), image.width - 1))
         top = max(0, min(round(box.y), image.height - 1))
         right = max(left + 1, min(round(box.x + box.width), image.width))
@@ -108,7 +118,7 @@ def create_job(request: JobRequest) -> dict[str, object]:
 
         saved_boxes.append(
             {
-                "id": index,
+                "id": box.id,
                 "x": left,
                 "y": top,
                 "width": right - left,
@@ -117,7 +127,7 @@ def create_job(request: JobRequest) -> dict[str, object]:
         )
 
         if request.action == "crop":
-            crop_name = f"crop_{index:03d}.png"
+            crop_name = f"crop_{box.id:03d}.png"
             image.crop((left, top, right, bottom)).save(job_dir / crop_name)
             result_files.append(f"/output/{job_id}/{crop_name}")
 

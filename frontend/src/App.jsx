@@ -218,7 +218,7 @@ function App() {
   const [interaction, setInteraction] = useState(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [boxStyle, setBoxStyle] = useState({ strokeWidth: 2, opacity: 50, color: BOX_COLORS[1].value });
+  const [boxStyle, setBoxStyle] = useState({ strokeWidth: 1, opacity: 45, color: BOX_COLORS[1].value });
   const [imageSize, setImageSize] = useState(EMPTY_IMAGE_SIZE);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -497,8 +497,8 @@ function App() {
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">ED</span>
           <div>
-            <p>ENGINEERING DOCUMENT</p>
-            <h1>圖面裁切工作台</h1>
+            <p>ENGINEERING DRAWING</p>
+            <h1>圖面工作台</h1>
           </div>
         </div>
         <div className="system-pill"><span /> 本機處理服務已就緒</div>
