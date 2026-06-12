@@ -2,6 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 const EMPTY_IMAGE_SIZE = { width: 0, height: 0 };
 const MIN_BOX_SIZE = 20;
+const MIN_ZOOM = 0.5;
+const MAX_ZOOM = 5;
+const CROP_COORDINATE_SCALE = 2;
+const PREVIEW_RENDER_SCALE = 4;
 const BOX_COLORS = [
   { name: "琥珀", value: "#bd7519" },
   { name: "藍色", value: "#245a8d" },
@@ -114,7 +118,6 @@ function AppearanceControls({ boxStyle, onChange }) {
         />
       </label>
       <div className="color-control">
-        <span>顏色</span>
         <div className="color-swatches">
           {BOX_COLORS.map((color) => (
             <button
@@ -171,12 +174,12 @@ function CropOverlay({
             key={box.id}
             className={`box-group ${isSelected ? "selected" : ""}`}
             data-box-id={box.id}
-            onPointerDown={activeTool === "select" ? (event) => onBoxPointerDown(event, box.id) : undefined}
+            onPointerDown={(event) => onBoxPointerDown(event, box.id)}
           >
             <rect className="box-rect" x={box.x} y={box.y} width={box.width} height={box.height} />
             <rect className="box-label" x={box.x} y={labelY} width="46" height="36" />
             <text className="box-label-text" x={box.x + 23} y={labelY + 18}>{box.id}</text>
-            {isSelected && activeTool === "select" && RESIZE_HANDLES.map((handle) => (
+            {isSelected && RESIZE_HANDLES.map((handle) => (
               <rect
                 key={handle.name}
                 className={`resize-handle resize-${handle.name}`}
@@ -210,10 +213,12 @@ function App() {
   const [page, setPage] = useState(1);
   const [boxes, setBoxes] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
-  const [activeTool, setActiveTool] = useState("crop");
+  const [activeTool, setActiveTool] = useState("select");
   const [draft, setDraft] = useState(null);
   const [interaction, setInteraction] = useState(null);
-  const [boxStyle, setBoxStyle] = useState({ strokeWidth: 3, opacity: 85, color: BOX_COLORS[0].value });
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [boxStyle, setBoxStyle] = useState({ strokeWidth: 2, opacity: 50, color: BOX_COLORS[1].value });
   const [imageSize, setImageSize] = useState(EMPTY_IMAGE_SIZE);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -222,6 +227,8 @@ function App() {
   const [toast, setToast] = useState("");
 
   const overlayRef = useRef(null);
+  const viewportRef = useRef(null);
+  const drawingSurfaceRef = useRef(null);
   const toastTimerRef = useRef(null);
 
   const currentDocument = useMemo(
@@ -230,7 +237,7 @@ function App() {
   );
   const selectedBox = boxes.find((box) => box.id === selectedId);
   const previewUrl = documentName
-    ? `/api/documents/${encodeURIComponent(documentName)}/pages/${page}/preview?scale=2`
+    ? `/api/documents/${encodeURIComponent(documentName)}/pages/${page}/preview?scale=${PREVIEW_RENDER_SCALE}`
     : "";
 
   function showToast(message) {
@@ -244,6 +251,23 @@ function App() {
     setSelectedId(null);
     setDraft(null);
     setInteraction(null);
+  }
+
+  function clampPan(nextPan, nextZoom = zoom) {
+    if (!viewportRef.current || !drawingSurfaceRef.current) return nextPan;
+    const viewportWidth = viewportRef.current.clientWidth - 60;
+    const viewportHeight = viewportRef.current.clientHeight - 60;
+    const maxX = Math.max(0, (drawingSurfaceRef.current.offsetWidth * nextZoom - viewportWidth) / 2);
+    const maxY = Math.max(0, (drawingSurfaceRef.current.offsetHeight * nextZoom - viewportHeight) / 2);
+    return {
+      x: clamp(nextPan.x, -maxX, maxX),
+      y: clamp(nextPan.y, -maxY, maxY),
+    };
+  }
+
+  function resetView() {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
   }
 
   function selectTool(tool) {
@@ -262,6 +286,7 @@ function App() {
     setImageSize(EMPTY_IMAGE_SIZE);
     setJobResult(null);
     resetBoxes();
+    resetView();
   }
 
   useEffect(() => {
@@ -324,7 +349,11 @@ function App() {
 
     if (activeTool === "select") {
       setSelectedId(null);
-      setInteraction(null);
+      setInteraction({
+        type: "pan",
+        start: { x: event.clientX, y: event.clientY },
+        original: { ...pan },
+      });
       return;
     }
 
@@ -334,7 +363,6 @@ function App() {
   }
 
   function handleBoxPointerDown(event, boxId, handle = null) {
-    if (activeTool !== "select") return;
     event.stopPropagation();
     capturePointer(event.pointerId);
     const box = boxes.find((current) => current.id === boxId);
@@ -351,6 +379,14 @@ function App() {
   }
 
   function handlePointerMove(event) {
+    if (interaction?.type === "pan") {
+      setPan(clampPan({
+        x: interaction.original.x + event.clientX - interaction.start.x,
+        y: interaction.original.y + event.clientY - interaction.start.y,
+      }));
+      return;
+    }
+
     const point = pointFromEvent(event);
 
     if (draft) {
@@ -389,6 +425,27 @@ function App() {
       }
     }
     setInteraction(null);
+  }
+
+  function handleWheel(event) {
+    if (!imageSize.width) return;
+    event.preventDefault();
+    const nextZoom = clamp(zoom * (event.deltaY < 0 ? 1.12 : 0.89), MIN_ZOOM, MAX_ZOOM);
+    if (nextZoom === zoom) return;
+
+    const bounds = viewportRef.current.getBoundingClientRect();
+    const pointer = {
+      x: event.clientX - bounds.left - bounds.width / 2,
+      y: event.clientY - bounds.top - bounds.height / 2,
+    };
+    const scaleRatio = nextZoom / zoom;
+    const nextPan = {
+      x: pointer.x - (pointer.x - pan.x) * scaleRatio,
+      y: pointer.y - (pointer.y - pan.y) * scaleRatio,
+    };
+
+    setZoom(nextZoom);
+    setPan(clampPan(nextPan, nextZoom));
   }
 
   function deleteSelected() {
@@ -495,7 +552,7 @@ function App() {
             active={activeTool === "crop"}
             icon={<CropIcon />}
             title="框選裁切區域"
-            description="在圖面上拖曳建立 box"
+            description="空白處建立，框可直接調整"
             shortcut="C"
             onClick={() => selectTool("crop")}
           />
@@ -518,7 +575,7 @@ function App() {
 
         <section className="tip-card">
           <strong>操作提示</strong>
-          <p>使用 C 建立裁切框；切換至 V 後，可拖曳 box 移動，或拖曳四角控制點調整大小。</p>
+          <p>滾動滑鼠縮放圖面；建立 box 後可直接拖曳或調整四角。選取模式下拖曳空白處可平移圖面。</p>
         </section>
       </aside>
 
@@ -532,7 +589,11 @@ function App() {
           <p className="box-count"><strong>{boxes.length}</strong> 個裁切框</p>
         </div>
 
-        <div className="canvas-viewport">
+        <div
+          ref={viewportRef}
+          className={`canvas-viewport ${interaction?.type === "pan" ? "is-panning" : ""}`}
+          onWheel={handleWheel}
+        >
           {loading && (
             <div className="loading-state" role="status">
               <span />
@@ -542,16 +603,21 @@ function App() {
           )}
           {loadError && !loading && <div className="error-state">{loadError}</div>}
           {previewUrl && (
-            <div className={`drawing-surface ${loading ? "is-loading" : ""}`}>
+            <div
+              ref={drawingSurfaceRef}
+              className={`drawing-surface ${loading ? "is-loading" : ""}`}
+              style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
+            >
               <img
                 key={previewUrl}
                 src={previewUrl}
                 alt="PDF page snapshot"
                 draggable="false"
                 onLoad={(event) => {
+                  const coordinateRatio = CROP_COORDINATE_SCALE / PREVIEW_RENDER_SCALE;
                   setImageSize({
-                    width: event.currentTarget.naturalWidth,
-                    height: event.currentTarget.naturalHeight,
+                    width: event.currentTarget.naturalWidth * coordinateRatio,
+                    height: event.currentTarget.naturalHeight * coordinateRatio,
                   });
                   setLoading(false);
                 }}
