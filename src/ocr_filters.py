@@ -82,19 +82,24 @@ def crop_feature_control_regions(
             elif line >= image.height - 1 - edge_limit:
                 bottom_line = line
 
-    if len(vertical_lines) < 2:
-        return None
-    if vertical_lines[0] <= edge_limit:
-        left, right = vertical_lines[0], vertical_lines[1]
-        crop_left = left + 2
-    else:
-        left, right = 0, vertical_lines[0]
-        crop_left = left
-
     inset = 2
-    crop_right = right - inset
     crop_top = top_line + inset if top_line is not None else 0
     crop_bottom = bottom_line - inset if bottom_line is not None else image.height
+    if len(vertical_lines) < 2:
+        return None
+
+    first_vertical = vertical_lines[0]
+    leading_region = dark[crop_top:crop_bottom, : max(0, first_vertical - inset)]
+    leading_ink = int(leading_region.sum())
+    has_leading_symbol = leading_ink >= max(3, round((crop_bottom - crop_top) * 0.2))
+    if first_vertical <= edge_limit or not has_leading_symbol:
+        left, right = first_vertical, vertical_lines[1]
+        crop_left = left + inset
+    else:
+        left, right = 0, first_vertical
+        crop_left = left
+
+    crop_right = right - inset
     if crop_right - crop_left <= inset * 2 or crop_bottom - crop_top <= inset * 2:
         return None
     symbol = normalize_symbol_crop(

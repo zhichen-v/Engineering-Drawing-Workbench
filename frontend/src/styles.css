@@ -547,6 +547,11 @@ kbd {
   cursor: grab;
 }
 
+.recognition-result {
+  pointer-events: none;
+  user-select: none;
+}
+
 .canvas-viewport.is-panning .recognition-overlay {
   cursor: grabbing;
 }
@@ -599,16 +604,20 @@ kbd {
 
 .box-label {
   fill: var(--box-color);
+  pointer-events: none;
   shape-rendering: geometricPrecision;
+  user-select: none;
 }
 
 .box-label-text {
   fill: white;
   font-size: 22px;
   font-weight: 900;
+  pointer-events: none;
   text-anchor: middle;
   dominant-baseline: central;
   text-rendering: geometricPrecision;
+  user-select: none;
 }
 
 .resize-handle {

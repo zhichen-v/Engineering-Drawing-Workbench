@@ -42,6 +42,24 @@ def test_crop_feature_control_regions_removes_frame_at_image_edge():
     assert values.width > 0
 
 
+def test_crop_feature_control_regions_accepts_leading_whitespace_before_frame():
+    image = Image.new("RGB", (140, 56), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((22, 12, 132, 48), outline="black")
+    draw.line((60, 12, 60, 48), fill="black")
+    draw.line((96, 12, 96, 48), fill="black")
+    draw.ellipse((32, 21, 50, 39), outline="black")
+    draw.line((41, 18, 41, 42), fill="black")
+    draw.line((29, 30, 53, 30), fill="black")
+
+    regions = crop_feature_control_regions(image)
+
+    assert regions is not None
+    symbol, values = regions
+    assert symbol.size == (128, 128)
+    assert values.width > 0
+
+
 def test_crop_feature_control_regions_rejects_text_without_horizontal_frame():
     image = Image.new("RGB", (191, 32), "white")
     draw = ImageDraw.Draw(image)
