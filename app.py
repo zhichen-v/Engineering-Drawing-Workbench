@@ -31,6 +31,7 @@ app.mount("/output", StaticFiles(directory=OUTPUT_DIR), name="output")
 
 class Box(BaseModel):
     id: int = Field(ge=1)
+    page: int | None = Field(default=None, ge=1)
     x: float = Field(ge=0)
     y: float = Field(ge=0)
     width: float = Field(gt=0)
@@ -117,9 +118,9 @@ def preview_page(
 def create_job(request: JobRequest) -> dict[str, object]:
     if request.action == "crop" and not request.boxes:
         raise HTTPException(status_code=400, detail="At least one box is required for crop")
-
-    snapshot = render_page(request.document, request.page)
-    image = Image.open(io.BytesIO(snapshot))
+    box_ids = [box.id for box in request.boxes]
+    if len(box_ids) != len(set(box_ids)):
+        raise HTTPException(status_code=400, detail="Box IDs must be unique across pages")
 
     document_stem = Path(request.document).stem
     safe_document_stem = "".join(
@@ -127,18 +128,33 @@ def create_job(request: JobRequest) -> dict[str, object]:
         for character in document_stem
     ).strip("_") or "document"
     document_hash = hashlib.sha256(request.document.encode("utf-8")).hexdigest()[:8]
-    job_id = f"{request.load_id}_{safe_document_stem}_{document_hash}_page_{request.page:03d}"
+    job_id = f"{request.load_id}_{safe_document_stem}_{document_hash}"
     job_dir = OUTPUT_DIR / job_id
     job_dir.mkdir(exist_ok=True)
-    (job_dir / "snapshot.png").write_bytes(snapshot)
 
     if request.action == "crop":
         for crop_path in job_dir.glob("crop_*.png"):
             crop_path.unlink()
+        for snapshot_path in job_dir.glob("snapshot_page_*.png"):
+            snapshot_path.unlink()
+
+    pages = sorted({box.page or request.page for box in request.boxes} or {request.page})
+    images = {}
+    snapshots = {}
+    result_files = []
+    for page_number in pages:
+        snapshot = render_page(request.document, page_number)
+        image = Image.open(io.BytesIO(snapshot))
+        snapshot_name = f"snapshot_page_{page_number:03d}.png"
+        (job_dir / snapshot_name).write_bytes(snapshot)
+        images[page_number] = image
+        snapshots[str(page_number)] = {"width": image.width, "height": image.height}
+        result_files.append(f"/output/{job_id}/{snapshot_name}")
 
     saved_boxes = []
-    result_files = [f"/output/{job_id}/snapshot.png"]
     for box in request.boxes:
+        page_number = box.page or request.page
+        image = images[page_number]
         left = max(0, min(round(box.x), image.width - 1))
         top = max(0, min(round(box.y), image.height - 1))
         right = max(left + 1, min(round(box.x + box.width), image.width))
@@ -147,6 +163,7 @@ def create_job(request: JobRequest) -> dict[str, object]:
         saved_boxes.append(
             {
                 "id": box.id,
+                "page": page_number,
                 "x": left,
                 "y": top,
                 "width": right - left,
@@ -165,8 +182,8 @@ def create_job(request: JobRequest) -> dict[str, object]:
         "load_id": request.load_id,
         "action": request.action,
         "document": request.document,
-        "page": request.page,
-        "snapshot": {"width": image.width, "height": image.height},
+        "pages": pages,
+        "snapshots": snapshots,
         "boxes": saved_boxes,
     }
     (job_dir / "boxes.json").write_text(

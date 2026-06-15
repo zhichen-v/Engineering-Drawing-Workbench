@@ -76,10 +76,15 @@ def normalize_symbol_crop(symbol: Image.Image, size: int = 128) -> Image.Image |
     return canvas
 
 
-def crop_feature_control_symbol(image: Image.Image) -> Image.Image | None:
+def crop_feature_control_regions(
+    image: Image.Image,
+) -> tuple[Image.Image, Image.Image] | None:
     grayscale = np.asarray(image.convert("L"))
     dark = grayscale < 190
     horizontal_lines = line_centers(dark.mean(axis=1) >= 0.5)
+    if not horizontal_lines:
+        return None
+
     top_line = bottom_line = None
     if len(horizontal_lines) >= 2:
         top_line, bottom_line = horizontal_lines[0], horizontal_lines[-1]
@@ -102,19 +107,28 @@ def crop_feature_control_symbol(image: Image.Image) -> Image.Image | None:
         return None
     if vertical_lines[0] <= edge_limit:
         left, right = vertical_lines[0], vertical_lines[1]
+        crop_left = left + 2
     else:
         left, right = 0, vertical_lines[0]
+        crop_left = left
 
     inset = 2
-    crop_left = left + inset if left else 0
     crop_right = right - inset
     crop_top = top_line + inset if top_line is not None else 0
     crop_bottom = bottom_line - inset if bottom_line is not None else image.height
     if crop_right - crop_left <= inset * 2 or crop_bottom - crop_top <= inset * 2:
         return None
-    return normalize_symbol_crop(
+    symbol = normalize_symbol_crop(
         image.crop((crop_left, crop_top, crop_right, crop_bottom))
     )
+    if symbol is None:
+        return None
+
+    value_right = vertical_lines[-1] - inset
+    if value_right <= right + inset:
+        value_right = image.width
+    values = image.crop((right + inset, crop_top, value_right, crop_bottom))
+    return symbol, values
 
 
 def load_symbol_classifier(checkpoint_path: Path, device: torch.device) -> dict:
@@ -151,15 +165,16 @@ def classify_gd_tag(
     image: Image.Image,
     classifier: dict,
     threshold: float,
-) -> str | None:
-    symbol = crop_feature_control_symbol(image)
-    if symbol is None:
+) -> tuple[str, Image.Image] | None:
+    regions = crop_feature_control_regions(image)
+    if regions is None:
         return None
+    symbol, values = regions
 
     label, confidence = classify_symbol(symbol, classifier, NON_GD_LABELS)
     if confidence < threshold:
         return None
-    return f"[GD_{label}]"
+    return f"[GD_{label}]", values
 
 
 def has_diameter_symbol(
@@ -237,8 +252,10 @@ def normalize_ocr_text(text: str) -> str:
     return " ".join(text.split())
 
 
-def remove_recognized_gd_symbol(text: str) -> str:
-    return re.sub(r"^(?:\[\s*\]|//+)\s*", "", text).strip()
+def clean_gd_value_text(text: str) -> str:
+    text = re.sub(r"\[\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*\]", r"\1", text)
+    text = re.sub(r"^(?:(?:\[[^\]]*\]|//+)\s*)+", "", text)
+    return " ".join(text.replace("|", " ").split())
 
 
 def load_box_metadata(input_dir: Path) -> tuple[str | None, dict[int, dict]]:
@@ -276,40 +293,62 @@ def run_ocr(args: argparse.Namespace) -> Path:
     if missing_boxes:
         raise ValueError(f"Missing box metadata for crops: {missing_boxes}")
 
-    device = select_device(args.device)
-    print(f"Using device: {device}")
-    classifier = load_symbol_classifier(args.classifier_checkpoint.resolve(), device)
-    print("Loading GLM-OCR from local cache..." if not args.allow_model_download else "Loading GLM-OCR...")
-    processor, model = load_base_model(device, args.allow_model_download)
+    output_path = input_dir / "ocr_results.json"
+    previous_results = {}
+    if output_path.is_file():
+        previous_payload = json.loads(output_path.read_text(encoding="utf-8"))
+        previous_results = {
+            int(result["crop_number"]): result
+            for result in previous_payload.get("results", [])
+        }
 
-    results = []
-    for index, (crop_number, path) in enumerate(crops, start=1):
-        print(f"[{index}/{len(crops)}] OCR: {path.name}")
+    results_by_number = {}
+    pending = []
+    for crop_number, path in crops:
+        previous = previous_results.get(crop_number)
+        if previous and previous.get("box") == boxes[crop_number]:
+            results_by_number[crop_number] = previous
+        else:
+            pending.append((crop_number, path))
+
+    print(f"Reusing {len(results_by_number)} unchanged OCR result(s).")
+    if pending:
+        device = select_device(args.device)
+        print(f"Using device: {device}")
+        classifier = load_symbol_classifier(args.classifier_checkpoint.resolve(), device)
+        print("Loading GLM-OCR from local cache..." if not args.allow_model_download else "Loading GLM-OCR...")
+        processor, model = load_base_model(device, args.allow_model_download)
+
+    for index, (crop_number, path) in enumerate(pending, start=1):
+        print(f"[{index}/{len(pending)}] OCR: {path.name}")
         with Image.open(path) as opened:
             image = opened.convert("RGB")
 
-        text = normalize_ocr_text(
-            recognize_image(image, processor, model, args.max_new_tokens)
-        )
-        gd_tag = classify_gd_tag(image, classifier, args.classifier_threshold)
-        if gd_tag:
-            text = f"{gd_tag} {remove_recognized_gd_symbol(text)}".strip()
-        elif not text.startswith("⌀") and has_diameter_symbol(
-            image,
-            classifier,
-            args.diameter_threshold,
-        ):
-            text = f"⌀ {text}".strip()
+        gd_result = classify_gd_tag(image, classifier, args.classifier_threshold)
+        if gd_result:
+            gd_tag, values = gd_result
+            text = clean_gd_value_text(normalize_ocr_text(
+                recognize_image(values, processor, model, args.max_new_tokens)
+            ))
+            text = f"{gd_tag} {text}".strip()
+        else:
+            text = normalize_ocr_text(
+                recognize_image(image, processor, model, args.max_new_tokens)
+            )
+            if not text.startswith("⌀") and has_diameter_symbol(
+                image,
+                classifier,
+                args.diameter_threshold,
+            ):
+                text = f"⌀ {text}".strip()
 
-        results.append(
-            {
-                "crop_number": crop_number,
-                "box": boxes[crop_number],
-                "ocr": text,
-            }
-        )
+        results_by_number[crop_number] = {
+            "crop_number": crop_number,
+            "box": boxes[crop_number],
+            "ocr": text,
+        }
 
-    output_path = input_dir / "ocr_results.json"
+    results = [results_by_number[crop_number] for crop_number, _ in crops]
     output_path.write_text(
         json.dumps({"job_id": job_id, "results": results}, ensure_ascii=False, indent=2)
         + "\n",

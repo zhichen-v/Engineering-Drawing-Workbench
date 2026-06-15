@@ -19,11 +19,14 @@ This repository is an engineering drawing crop and OCR workbench. The web UI pro
 
 Frontend boxes use the original pixel coordinates of the preview PNG rendered at `PREVIEW_SCALE = 2.0`. Do not change the preview render scale or send CSS/display coordinates without updating both frontend and backend behavior.
 
+All pages from one loaded PDF share one output job. Box IDs are unique and sequential across the whole document, and each saved box includes its page number.
+
 ## Development Rules
 
 - Keep the implementation simple and dependency-light.
 - Make surgical changes; do not refactor unrelated UI or API behavior.
 - Preserve box order. Deleting a box must renumber later boxes without reordering them.
+- Preserve boxes when switching pages within the same document and keep their IDs continuous across pages.
 - Keep tool behavior distinct: crop mode creates boxes; select mode moves and resizes existing boxes.
 - Moving and resizing must clamp boxes to the preview image bounds.
 - Validate changes with `.\.venv\Scripts\pytest.exe`.
@@ -31,6 +34,7 @@ Frontend boxes use the original pixel coordinates of the preview PNG rendered at
 - Use `uv pip install --python .\.venv\Scripts\python.exe ...` for dependencies.
 - Never commit files generated under `output/`.
 - Keep OCR output as one `ocr_results.json` file inside the selected job folder.
+- Reuse an existing OCR result when its crop number and complete saved box metadata are unchanged.
 - Keep the CLI OCR test path available through `--test <output-folder>`.
 - Do not manually edit generated files under `static/`; edit React source under `frontend/src/`.
 

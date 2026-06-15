@@ -288,7 +288,7 @@ function App() {
   const [ocrResult, setOcrResult] = useState(null);
   const [recognizing, setRecognizing] = useState(false);
   const [viewMode, setViewMode] = useState("edit");
-  const [layers, setLayers] = useState({ drawing: true, recognition: true });
+  const [recognitionVisible, setRecognitionVisible] = useState(true);
   const [toast, setToast] = useState("");
 
   const overlayRef = useRef(null);
@@ -296,6 +296,7 @@ function App() {
   const drawingSurfaceRef = useRef(null);
   const toastTimerRef = useRef(null);
   const loadIdRef = useRef("");
+  const pageBoxesRef = useRef({});
 
   const currentDocument = useMemo(
     () => documents.find((document) => document.name === documentName),
@@ -305,6 +306,14 @@ function App() {
   const previewUrl = documentName
     ? `/api/documents/${encodeURIComponent(documentName)}/pages/${page}/preview?scale=${PREVIEW_RENDER_SCALE}`
     : "";
+  const documentBoxes = Object.entries(pageBoxesRef.current)
+    .filter(([pageNumber]) => Number(pageNumber) !== page)
+    .flatMap(([pageNumber, pageBoxes]) => pageBoxes.map((box) => ({ ...box, page: Number(pageNumber) })))
+    .concat(boxes.map((box) => ({ ...box, page })))
+    .sort((left, right) => left.id - right.id);
+  const currentOcrResults = (ocrResult?.results || []).filter(
+    (result) => (result.box.page || 1) === page,
+  );
 
   function showToast(message) {
     setToast(message);
@@ -313,6 +322,7 @@ function App() {
   }
 
   function resetBoxes() {
+    pageBoxesRef.current = {};
     setBoxes([]);
     setSelectedId(null);
     setDraft(null);
@@ -343,19 +353,25 @@ function App() {
   }
 
   function confirmDiscard() {
-    return boxes.length === 0 || window.confirm("切換圖面會清除目前框選，確定繼續嗎？");
+    return documentBoxes.length === 0 || window.confirm("切換文件會清除目前框選，確定繼續嗎？");
   }
 
-  function beginPageLoad() {
+  function beginDocumentLoad() {
     loadIdRef.current = createLoadId();
-    setLoading(true);
-    setLoadError("");
-    setImageSize(EMPTY_IMAGE_SIZE);
     setJobResult(null);
     setOcrResult(null);
     setViewMode("edit");
-    setLayers({ drawing: true, recognition: true });
+    setRecognitionVisible(true);
     resetBoxes();
+  }
+
+  function beginPageLoad() {
+    setLoading(true);
+    setLoadError("");
+    setImageSize(EMPTY_IMAGE_SIZE);
+    setSelectedId(null);
+    setDraft(null);
+    setInteraction(null);
     resetView();
   }
 
@@ -383,6 +399,10 @@ function App() {
       window.clearTimeout(toastTimerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (documentName) beginDocumentLoad();
+  }, [documentName]);
 
   useEffect(() => {
     if (documentName) beginPageLoad();
@@ -491,7 +511,7 @@ function App() {
       const box = normalizedBox(draft.start, pointFromEvent(event));
       setDraft(null);
       if (box.width >= MIN_BOX_SIZE && box.height >= MIN_BOX_SIZE) {
-        const id = boxes.length + 1;
+        const id = Math.max(0, ...documentBoxes.map((box) => box.id)) + 1;
         setBoxes((current) => [...current, { id, ...box }]);
         setSelectedId(id);
       }
@@ -522,11 +542,15 @@ function App() {
 
   function deleteSelected() {
     if (viewMode !== "edit" || selectedId === null) return;
-    setBoxes((current) =>
-      current
-        .filter((box) => box.id !== selectedId)
-        .map((box, index) => ({ ...box, id: index + 1 })),
-    );
+    const grouped = {};
+    documentBoxes
+      .filter((box) => box.id !== selectedId)
+      .map((box, index) => ({ ...box, id: index + 1 }))
+      .forEach(({ page: boxPage, ...box }) => {
+        grouped[boxPage] = [...(grouped[boxPage] || []), box];
+      });
+    pageBoxesRef.current = grouped;
+    setBoxes(grouped[page] || []);
     setSelectedId(null);
     setInteraction(null);
     showToast("已刪除選取框，編號已依原順序重新排列");
@@ -539,7 +563,11 @@ function App() {
   }
 
   function changePage(nextPage) {
-    if (!confirmDiscard()) return;
+    pageBoxesRef.current[page] = boxes;
+    setBoxes(pageBoxesRef.current[nextPage] || []);
+    setSelectedId(null);
+    setDraft(null);
+    setInteraction(null);
     setPage(nextPage);
   }
 
@@ -550,7 +578,13 @@ function App() {
       const response = await fetch("/api/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ document: documentName, page, load_id: loadIdRef.current, boxes, action }),
+        body: JSON.stringify({
+          document: documentName,
+          page,
+          load_id: loadIdRef.current,
+          boxes: documentBoxes,
+          action,
+        }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.detail || "輸出失敗");
@@ -575,7 +609,7 @@ function App() {
           document: documentName,
           page,
           load_id: loadIdRef.current,
-          boxes,
+          boxes: documentBoxes,
           action: "crop",
         }),
       });
@@ -593,7 +627,7 @@ function App() {
       setSelectedId(null);
       setInteraction(null);
       setViewMode("recognition");
-      setLayers({ drawing: true, recognition: true });
+      setRecognitionVisible(true);
       showToast("OCR 辨識完成");
     } catch (error) {
       showToast(error.message);
@@ -694,7 +728,7 @@ function App() {
               </button>
               <button
                 className="ghost-button full-width"
-                disabled={busy || boxes.length === 0}
+                disabled={busy || documentBoxes.length === 0}
                 onClick={() => {
                   if (window.confirm("確定清除全部框選嗎？")) {
                     resetBoxes();
@@ -742,25 +776,15 @@ function App() {
             </div>
           )}
           {viewMode === "recognition" && (
-            <div className="layer-panel" aria-label="圖面顯示圖層">
-              <span className="layer-panel-title">LAYERS</span>
+            <div className="recognition-toggle">
               <button
-                className={layers.recognition ? "active" : ""}
+                className={recognitionVisible ? "active" : ""}
                 type="button"
-                onClick={() => setLayers((current) => ({ ...current, recognition: !current.recognition }))}
+                onClick={() => setRecognitionVisible((current) => !current)}
               >
                 <i className="layer-swatch recognition-swatch" />
                 <span><strong>OCR 標註</strong><small>螢光辨識結果</small></span>
-                <b>{layers.recognition ? "ON" : "OFF"}</b>
-              </button>
-              <button
-                className={layers.drawing ? "active" : ""}
-                type="button"
-                onClick={() => setLayers((current) => ({ ...current, drawing: !current.drawing }))}
-              >
-                <i className="layer-swatch drawing-swatch" />
-                <span><strong>圖面底圖</strong><small>原始工程圖面</small></span>
-                <b>{layers.drawing ? "ON" : "OFF"}</b>
+                <b>{recognitionVisible ? "ON" : "OFF"}</b>
               </button>
             </div>
           )}
@@ -772,7 +796,6 @@ function App() {
               style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
             >
               <img
-                className={viewMode === "recognition" && !layers.drawing ? "layer-hidden" : ""}
                 key={previewUrl}
                 src={previewUrl}
                 alt="PDF page snapshot"
@@ -812,8 +835,8 @@ function App() {
                   onPointerMove={handlePointerMove}
                   onPointerUp={handlePointerUp}
                   overlayRef={overlayRef}
-                  results={ocrResult.results}
-                  visible={layers.recognition}
+                  results={currentOcrResults}
+                  visible={recognitionVisible}
                 />
               )}
             </div>
@@ -828,7 +851,7 @@ function App() {
             <div className="recognition-summary">
               <strong>{ocrResult?.results.length || 0}</strong>
               <span>筆 OCR 辨識結果</span>
-              <small>可使用工作區右上角圖層按鈕進行對比</small>
+              <small>可使用工作區右上角按鈕隱藏 OCR 標註</small>
             </div>
           ) : !selectedBox ? (
             <div className="empty-card">尚未選取任何裁切框</div>
@@ -845,13 +868,13 @@ function App() {
           <SectionHeading step="04" eyebrow="OUTPUT" title="輸出作業" />
           <button
             className="ghost-button full-width action-button"
-            disabled={busy || boxes.length === 0 || viewMode === "recognition"}
+            disabled={busy || documentBoxes.length === 0 || viewMode === "recognition"}
             onClick={() => submitJob("crop")}
           >儲存標註資料</button>
           <button
             className="primary-button"
             type="button"
-            disabled={busy || boxes.length === 0 || viewMode === "recognition"}
+            disabled={busy || documentBoxes.length === 0 || viewMode === "recognition"}
             onClick={submitRecognition}
           >
             <span>{recognizing ? "辨識處理中" : "執行辨識"}</span>
