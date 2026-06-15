@@ -4,8 +4,9 @@ from types import SimpleNamespace
 
 from PIL import Image, ImageDraw
 
-from src import ocr
-from src.ocr import OCR_VERSION, clean_gd_value_text, crop_feature_control_regions
+from src import ocr, ocr_filters
+from src.ocr import OCR_VERSION
+from src.ocr_filters import clean_gd_value_text, crop_feature_control_regions
 
 
 def test_crop_feature_control_regions_accepts_missing_top_frame():
@@ -64,14 +65,14 @@ def test_has_diameter_symbol_stops_at_gap_before_text(monkeypatch):
     draw.ellipse((37, 8, 49, 32), outline="black")
     classified_sizes = []
 
-    monkeypatch.setattr(ocr, "normalize_symbol_crop", lambda symbol: symbol)
+    monkeypatch.setattr(ocr_filters, "normalize_symbol_crop", lambda symbol: symbol)
     monkeypatch.setattr(
-        ocr,
+        ocr_filters,
         "classify_symbol",
         lambda symbol, _: classified_sizes.append(symbol.size) or ("DIAMETER", 1.0),
     )
 
-    assert ocr.has_diameter_symbol(image, {}, 0.99)
+    assert ocr_filters.has_diameter_symbol(image, {}, 0.99)
     assert classified_sizes == [(30, 40)]
 
 

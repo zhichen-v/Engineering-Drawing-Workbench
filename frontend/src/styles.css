@@ -518,7 +518,7 @@ kbd {
 }
 
 .drawing-surface.recognition-mode img {
-  opacity: 0.59;
+  opacity: 0.79;
 }
 
 .crop-overlay,
@@ -553,7 +553,7 @@ kbd {
 
 .recognition-box {
   fill: #fff200;
-  fill-opacity: 0.79;
+  fill-opacity: 0.59;
   stroke: none;
 }
 
