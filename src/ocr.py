@@ -18,6 +18,7 @@ CLASSIFIER_CHECKPOINT = SYMBOL_CLASSIFIER_DIR / "output" / "best.pt"
 BASE_MODEL = "zai-org/GLM-OCR"
 CROP_PATTERN = re.compile(r"crop_(\d+)\.png$")
 NON_GD_LABELS = {"DIAMETER", "UNKNOWN"}
+OCR_VERSION = 2
 
 if str(SYMBOL_CLASSIFIER_DIR) not in sys.path:
     sys.path.insert(0, str(SYMBOL_CLASSIFIER_DIR))
@@ -177,13 +178,34 @@ def classify_gd_tag(
     return f"[GD_{label}]", values
 
 
+def crop_leading_symbol(image: Image.Image) -> Image.Image:
+    dark_columns = (np.asarray(image.convert("L")) < 190).any(axis=0)
+    ink_columns = np.flatnonzero(dark_columns)
+    leading_width = min(image.width, image.height)
+    if not len(ink_columns):
+        return image.crop((0, 0, leading_width, image.height))
+
+    first_ink = int(ink_columns[0])
+    search_limit = min(image.width, first_ink + image.height)
+    minimum_gap = max(2, round(image.height * 0.1))
+    gap_start = None
+    for column in range(first_ink, search_limit):
+        if not dark_columns[column]:
+            gap_start = column if gap_start is None else gap_start
+        else:
+            if gap_start is not None and column - gap_start >= minimum_gap:
+                leading_width = gap_start
+                break
+            gap_start = None
+    return image.crop((0, 0, leading_width, image.height))
+
+
 def has_diameter_symbol(
     image: Image.Image,
     classifier: dict,
     threshold: float,
 ) -> bool:
-    leading_width = min(image.width, image.height)
-    symbol = normalize_symbol_crop(image.crop((0, 0, leading_width, image.height)))
+    symbol = normalize_symbol_crop(crop_leading_symbol(image))
     if symbol is None:
         return False
 
@@ -297,10 +319,11 @@ def run_ocr(args: argparse.Namespace) -> Path:
     previous_results = {}
     if output_path.is_file():
         previous_payload = json.loads(output_path.read_text(encoding="utf-8"))
-        previous_results = {
-            int(result["crop_number"]): result
-            for result in previous_payload.get("results", [])
-        }
+        if previous_payload.get("ocr_version") == OCR_VERSION:
+            previous_results = {
+                int(result["crop_number"]): result
+                for result in previous_payload.get("results", [])
+            }
 
     results_by_number = {}
     pending = []
@@ -350,7 +373,11 @@ def run_ocr(args: argparse.Namespace) -> Path:
 
     results = [results_by_number[crop_number] for crop_number, _ in crops]
     output_path.write_text(
-        json.dumps({"job_id": job_id, "results": results}, ensure_ascii=False, indent=2)
+        json.dumps(
+            {"job_id": job_id, "ocr_version": OCR_VERSION, "results": results},
+            ensure_ascii=False,
+            indent=2,
+        )
         + "\n",
         encoding="utf-8",
     )

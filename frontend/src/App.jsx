@@ -237,6 +237,7 @@ function RecognitionOverlay({
         const boxEdge = onRight ? box.x + box.width : box.x;
         const labelX = boxEdge + (onRight ? 24 : -24);
         const labelY = box.y + box.height / 2;
+        const numberY = Math.max(0, box.y - 36);
         return (
           <g key={result.crop_number} className="recognition-result">
             <rect
@@ -246,6 +247,10 @@ function RecognitionOverlay({
               width={box.width}
               height={box.height}
             />
+            <rect className="recognition-number-box" x={box.x} y={numberY} width="46" height="36" />
+            <text className="box-label-text" x={box.x + 23} y={numberY + 18}>
+              {result.crop_number}
+            </text>
             <line
               className="recognition-leader"
               x1={boxEdge}

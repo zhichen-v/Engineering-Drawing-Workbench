@@ -553,8 +553,13 @@ kbd {
 
 .recognition-box {
   fill: #fff200;
-  fill-opacity: 0.52;
+  fill-opacity: 0.79;
   stroke: none;
+}
+
+.recognition-number-box {
+  fill: #b53a2f;
+  shape-rendering: geometricPrecision;
 }
 
 .recognition-leader {
