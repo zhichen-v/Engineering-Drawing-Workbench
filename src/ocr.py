@@ -13,7 +13,6 @@ from transformers import AutoModelForImageTextToText, AutoProcessor
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_INPUT_DIR = ROOT / "output" / "59105-0SBG000_81c9341e_page_001"
 SYMBOL_CLASSIFIER_DIR = Path(__file__).resolve().parent / "symbol-classifierdata"
 CLASSIFIER_CHECKPOINT = SYMBOL_CLASSIFIER_DIR / "output" / "best.pt"
 BASE_MODEL = "zai-org/GLM-OCR"
@@ -81,34 +80,40 @@ def crop_feature_control_symbol(image: Image.Image) -> Image.Image | None:
     grayscale = np.asarray(image.convert("L"))
     dark = grayscale < 190
     horizontal_lines = line_centers(dark.mean(axis=1) >= 0.5)
-    if len(horizontal_lines) < 2:
-        return None
+    top_line = bottom_line = None
+    if len(horizontal_lines) >= 2:
+        top_line, bottom_line = horizontal_lines[0], horizontal_lines[-1]
+        frame = dark[top_line : bottom_line + 1]
+        top_touch = frame[: min(3, frame.shape[0])].any(axis=0)
+        bottom_touch = frame[-min(3, frame.shape[0]) :].any(axis=0)
+        vertical_lines = line_centers((frame.mean(axis=0) >= 0.9) & top_touch & bottom_touch)
+        edge_limit = max(6, round((bottom_line - top_line) * 0.3))
+    else:
+        vertical_lines = line_centers(dark.mean(axis=0) >= 0.7)
+        edge_limit = max(6, round(image.height * 0.3))
+        if horizontal_lines:
+            line = horizontal_lines[0]
+            if line <= edge_limit:
+                top_line = line
+            elif line >= image.height - 1 - edge_limit:
+                bottom_line = line
 
-    top, bottom = horizontal_lines[0], horizontal_lines[-1]
-    frame_height = bottom - top
-    if frame_height < 8:
+    if len(vertical_lines) < 2:
         return None
-
-    frame = dark[top : bottom + 1]
-    top_touch = frame[: min(3, frame.shape[0])].any(axis=0)
-    bottom_touch = frame[-min(3, frame.shape[0]) :].any(axis=0)
-    vertical_lines = line_centers((frame.mean(axis=0) >= 0.9) & top_touch & bottom_touch)
-    if not vertical_lines:
-        return None
-
-    edge_limit = max(6, round(frame_height * 0.3))
     if vertical_lines[0] <= edge_limit:
-        if len(vertical_lines) < 2:
-            return None
         left, right = vertical_lines[0], vertical_lines[1]
     else:
         left, right = 0, vertical_lines[0]
 
     inset = 2
-    if right - left <= inset * 2 or bottom - top <= inset * 2:
+    crop_left = left + inset if left else 0
+    crop_right = right - inset
+    crop_top = top_line + inset if top_line is not None else 0
+    crop_bottom = bottom_line - inset if bottom_line is not None else image.height
+    if crop_right - crop_left <= inset * 2 or crop_bottom - crop_top <= inset * 2:
         return None
     return normalize_symbol_crop(
-        image.crop((left + inset, top + inset, right - inset, bottom - inset))
+        image.crop((crop_left, crop_top, crop_right, crop_bottom))
     )
 
 
@@ -162,7 +167,7 @@ def has_diameter_symbol(
     classifier: dict,
     threshold: float,
 ) -> bool:
-    leading_width = min(image.width, round(image.height * 0.7))
+    leading_width = min(image.width, image.height)
     symbol = normalize_symbol_crop(image.crop((0, 0, leading_width, image.height)))
     if symbol is None:
         return False
@@ -252,6 +257,14 @@ def crop_inputs(input_dir: Path) -> list[tuple[int, Path]]:
     return sorted(crops)
 
 
+def resolve_test_input_dir(folder_name: str) -> Path:
+    output_dir = (ROOT / "output").resolve()
+    input_dir = (output_dir / folder_name).resolve()
+    if input_dir.parent != output_dir:
+        raise ValueError("--test must name one folder directly under output/")
+    return input_dir
+
+
 def run_ocr(args: argparse.Namespace) -> Path:
     input_dir = args.input_dir.resolve()
     crops = crop_inputs(input_dir)
@@ -307,7 +320,12 @@ def run_ocr(args: argparse.Namespace) -> Path:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run GLM-OCR and GD symbol classification on crop images.")
-    parser.add_argument("--input-dir", type=Path, default=DEFAULT_INPUT_DIR)
+    parser.add_argument(
+        "--test",
+        required=True,
+        metavar="FOLDER_NAME",
+        help="Read crop data from output/FOLDER_NAME and write ocr_results.json there.",
+    )
     parser.add_argument("--classifier-checkpoint", type=Path, default=CLASSIFIER_CHECKPOINT)
     parser.add_argument("--classifier-threshold", type=float, default=0.4)
     parser.add_argument("--diameter-threshold", type=float, default=0.99)
@@ -324,6 +342,11 @@ def main() -> int:
         parser.error("--classifier-threshold must be between 0 and 1.")
     if not 0 <= args.diameter_threshold <= 1:
         parser.error("--diameter-threshold must be between 0 and 1.")
+
+    try:
+        args.input_dir = resolve_test_input_dir(args.test)
+    except ValueError as error:
+        parser.error(str(error))
 
     output_path = run_ocr(args)
     print(f"Saved: {output_path}")

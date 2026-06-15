@@ -19,6 +19,10 @@ const RESIZE_HANDLES = [
   { name: "sw", x: (box) => box.x, y: (box) => box.y + box.height },
 ];
 
+function createLoadId() {
+  return new Date().toISOString().replace(/[-:.]/g, "");
+}
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -207,6 +211,63 @@ function CropOverlay({
   );
 }
 
+function RecognitionOverlay({
+  imageSize,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+  overlayRef,
+  results,
+  visible,
+}) {
+  return (
+    <svg
+      ref={overlayRef}
+      className="recognition-overlay"
+      viewBox={`0 0 ${imageSize.width} ${imageSize.height}`}
+      aria-label="OCR 辨識結果標註層"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+    >
+      {visible && results.map((result) => {
+        const box = result.box;
+        const onRight = box.x + box.width / 2 >= imageSize.width / 2;
+        const boxEdge = onRight ? box.x + box.width : box.x;
+        const labelX = boxEdge + (onRight ? 24 : -24);
+        const labelY = box.y + box.height / 2;
+        return (
+          <g key={result.crop_number} className="recognition-result">
+            <rect
+              className="recognition-box"
+              x={box.x}
+              y={box.y}
+              width={box.width}
+              height={box.height}
+            />
+            <line
+              className="recognition-leader"
+              x1={boxEdge}
+              y1={labelY}
+              x2={labelX}
+              y2={labelY}
+            />
+            <text
+              className="recognition-text"
+              x={labelX + (onRight ? 8 : -8)}
+              y={labelY}
+              textAnchor={onRight ? "start" : "end"}
+            >
+              {result.ocr}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 function App() {
   const [documents, setDocuments] = useState([]);
   const [documentName, setDocumentName] = useState("");
@@ -218,18 +279,23 @@ function App() {
   const [interaction, setInteraction] = useState(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [boxStyle, setBoxStyle] = useState({ strokeWidth: 1, opacity: 45, color: BOX_COLORS[1].value });
+  const [boxStyle, setBoxStyle] = useState({ strokeWidth: 1, opacity: 45, color: BOX_COLORS[3].value });
   const [imageSize, setImageSize] = useState(EMPTY_IMAGE_SIZE);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [jobResult, setJobResult] = useState(null);
+  const [ocrResult, setOcrResult] = useState(null);
+  const [recognizing, setRecognizing] = useState(false);
+  const [viewMode, setViewMode] = useState("edit");
+  const [layers, setLayers] = useState({ drawing: true, recognition: true });
   const [toast, setToast] = useState("");
 
   const overlayRef = useRef(null);
   const viewportRef = useRef(null);
   const drawingSurfaceRef = useRef(null);
   const toastTimerRef = useRef(null);
+  const loadIdRef = useRef("");
 
   const currentDocument = useMemo(
     () => documents.find((document) => document.name === documentName),
@@ -281,10 +347,14 @@ function App() {
   }
 
   function beginPageLoad() {
+    loadIdRef.current = createLoadId();
     setLoading(true);
     setLoadError("");
     setImageSize(EMPTY_IMAGE_SIZE);
     setJobResult(null);
+    setOcrResult(null);
+    setViewMode("edit");
+    setLayers({ drawing: true, recognition: true });
     resetBoxes();
     resetView();
   }
@@ -321,6 +391,7 @@ function App() {
   useEffect(() => {
     function handleKeyDown(event) {
       if (["INPUT", "SELECT", "TEXTAREA"].includes(event.target.tagName)) return;
+      if (viewMode !== "edit") return;
       if (event.key === "Delete") deleteSelected();
       if (event.key.toLowerCase() === "v") selectTool("select");
       if (event.key.toLowerCase() === "c") selectTool("crop");
@@ -347,7 +418,7 @@ function App() {
     if (!imageSize.width) return;
     capturePointer(event.pointerId);
 
-    if (activeTool === "select") {
+    if (viewMode === "recognition" || activeTool === "select") {
       setSelectedId(null);
       setInteraction({
         type: "pan",
@@ -363,6 +434,7 @@ function App() {
   }
 
   function handleBoxPointerDown(event, boxId, handle = null) {
+    if (viewMode !== "edit") return;
     event.stopPropagation();
     capturePointer(event.pointerId);
     const box = boxes.find((current) => current.id === boxId);
@@ -449,7 +521,7 @@ function App() {
   }
 
   function deleteSelected() {
-    if (selectedId === null) return;
+    if (viewMode !== "edit" || selectedId === null) return;
     setBoxes((current) =>
       current
         .filter((box) => box.id !== selectedId)
@@ -478,7 +550,7 @@ function App() {
       const response = await fetch("/api/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ document: documentName, page, boxes, action }),
+        body: JSON.stringify({ document: documentName, page, load_id: loadIdRef.current, boxes, action }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.detail || "輸出失敗");
@@ -489,6 +561,54 @@ function App() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function submitRecognition() {
+    setBusy(true);
+    setRecognizing(true);
+    setJobResult(null);
+    try {
+      const cropResponse = await fetch("/api/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          document: documentName,
+          page,
+          load_id: loadIdRef.current,
+          boxes,
+          action: "crop",
+        }),
+      });
+      const cropResult = await cropResponse.json();
+      if (!cropResponse.ok) throw new Error(cropResult.detail || "裁切資料更新失敗");
+
+      const response = await fetch(`/api/jobs/${encodeURIComponent(cropResult.job_id)}/ocr`, {
+        method: "POST",
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || "辨識失敗");
+
+      setOcrResult(result);
+      setJobResult({ ...cropResult, action: "ocr", revision: Date.now() });
+      setSelectedId(null);
+      setInteraction(null);
+      setViewMode("recognition");
+      setLayers({ drawing: true, recognition: true });
+      showToast("OCR 辨識完成");
+    } catch (error) {
+      showToast(error.message);
+    } finally {
+      setRecognizing(false);
+      setBusy(false);
+    }
+  }
+
+  function returnToEdit() {
+    setViewMode("edit");
+    setSelectedId(null);
+    setInteraction(null);
+    setActiveTool("select");
+    showToast("已返回標註編輯模式");
   }
 
   return (
@@ -540,37 +660,50 @@ function App() {
 
         <section>
           <SectionHeading step="02" eyebrow="TOOLS" title="標註工具" />
-          <ToolButton
-            active={activeTool === "select"}
-            icon={<SelectIcon />}
-            title="選取／調整"
-            description="選取、移動或調整 box 大小"
-            shortcut="V"
-            onClick={() => selectTool("select")}
-          />
-          <ToolButton
-            active={activeTool === "crop"}
-            icon={<CropIcon />}
-            title="框選裁切區域"
-            description="空白處建立，框可直接調整"
-            shortcut="C"
-            onClick={() => selectTool("crop")}
-          />
-          <button className="tool-button danger" disabled={busy || selectedId === null} onClick={deleteSelected}>
-            <span className="delete-icon" aria-hidden="true">×</span>
-            <div><strong>刪除選取框</strong><small>其餘編號會自動補位</small></div>
-            <kbd>DEL</kbd>
-          </button>
-          <button
-            className="ghost-button full-width"
-            disabled={busy || boxes.length === 0}
-            onClick={() => {
-              if (window.confirm("確定清除全部框選嗎？")) {
-                resetBoxes();
-                showToast("已清除全部框選");
-              }
-            }}
-          >清除全部框選</button>
+          {viewMode === "recognition" ? (
+            <ToolButton
+              active
+              icon={<SelectIcon />}
+              title="重新編輯"
+              description="保留目前 box，返回標註模式"
+              shortcut="EDIT"
+              onClick={returnToEdit}
+            />
+          ) : (
+            <>
+              <ToolButton
+                active={activeTool === "select"}
+                icon={<SelectIcon />}
+                title="選取／調整"
+                description="選取、移動或調整 box 大小"
+                shortcut="V"
+                onClick={() => selectTool("select")}
+              />
+              <ToolButton
+                active={activeTool === "crop"}
+                icon={<CropIcon />}
+                title="框選裁切區域"
+                description="空白處建立，框可直接調整"
+                shortcut="C"
+                onClick={() => selectTool("crop")}
+              />
+              <button className="tool-button danger" disabled={busy || selectedId === null} onClick={deleteSelected}>
+                <span className="delete-icon" aria-hidden="true">×</span>
+                <div><strong>刪除選取框</strong><small>其餘編號會自動補位</small></div>
+                <kbd>DEL</kbd>
+              </button>
+              <button
+                className="ghost-button full-width"
+                disabled={busy || boxes.length === 0}
+                onClick={() => {
+                  if (window.confirm("確定清除全部框選嗎？")) {
+                    resetBoxes();
+                    showToast("已清除全部框選");
+                  }
+                }}
+              >清除全部框選</button>
+            </>
+          )}
         </section>
 
         <section className="tip-card">
@@ -585,7 +718,14 @@ function App() {
             <strong>{documentName || "NO DOCUMENT"}</strong>
             <span>{imageSize.width ? `${imageSize.width} × ${imageSize.height} PX` : "-- × -- PX"}</span>
           </div>
-          <AppearanceControls boxStyle={boxStyle} onChange={setBoxStyle} />
+          {viewMode === "edit" ? (
+            <AppearanceControls boxStyle={boxStyle} onChange={setBoxStyle} />
+          ) : (
+            <div className="recognition-mode-label">
+              <span>OCR VIEW</span>
+              <strong>辨識結果檢視</strong>
+            </div>
+          )}
           <p className="box-count"><strong>{boxes.length}</strong> 個裁切框</p>
         </div>
 
@@ -594,21 +734,45 @@ function App() {
           className={`canvas-viewport ${interaction?.type === "pan" ? "is-panning" : ""}`}
           onWheel={handleWheel}
         >
-          {loading && (
+          {(loading || recognizing) && (
             <div className="loading-state" role="status">
               <span />
-              <strong>載入工程圖面中</strong>
-              <small>正在建立高解析度預覽</small>
+              <strong>{recognizing ? "執行圖面辨識中" : "載入工程圖面中"}</strong>
+              <small>{recognizing ? "正在分析 crop 圖片與符號" : "正在建立高解析度預覽"}</small>
+            </div>
+          )}
+          {viewMode === "recognition" && (
+            <div className="layer-panel" aria-label="圖面顯示圖層">
+              <span className="layer-panel-title">LAYERS</span>
+              <button
+                className={layers.recognition ? "active" : ""}
+                type="button"
+                onClick={() => setLayers((current) => ({ ...current, recognition: !current.recognition }))}
+              >
+                <i className="layer-swatch recognition-swatch" />
+                <span><strong>OCR 標註</strong><small>螢光辨識結果</small></span>
+                <b>{layers.recognition ? "ON" : "OFF"}</b>
+              </button>
+              <button
+                className={layers.drawing ? "active" : ""}
+                type="button"
+                onClick={() => setLayers((current) => ({ ...current, drawing: !current.drawing }))}
+              >
+                <i className="layer-swatch drawing-swatch" />
+                <span><strong>圖面底圖</strong><small>原始工程圖面</small></span>
+                <b>{layers.drawing ? "ON" : "OFF"}</b>
+              </button>
             </div>
           )}
           {loadError && !loading && <div className="error-state">{loadError}</div>}
           {previewUrl && (
             <div
               ref={drawingSurfaceRef}
-              className={`drawing-surface ${loading ? "is-loading" : ""}`}
+              className={`drawing-surface ${loading || recognizing ? "is-loading" : ""} ${viewMode === "recognition" ? "recognition-mode" : ""}`}
               style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
             >
               <img
+                className={viewMode === "recognition" && !layers.drawing ? "layer-hidden" : ""}
                 key={previewUrl}
                 src={previewUrl}
                 alt="PDF page snapshot"
@@ -626,7 +790,7 @@ function App() {
                   setLoadError("PDF 頁面預覽載入失敗");
                 }}
               />
-              {imageSize.width > 0 && (
+              {imageSize.width > 0 && viewMode === "edit" && (
                 <CropOverlay
                   activeTool={activeTool}
                   boxes={boxes}
@@ -641,6 +805,17 @@ function App() {
                   overlayRef={overlayRef}
                 />
               )}
+              {imageSize.width > 0 && viewMode === "recognition" && ocrResult && (
+                <RecognitionOverlay
+                  imageSize={imageSize}
+                  onPointerDown={handleOverlayPointerDown}
+                  onPointerMove={handlePointerMove}
+                  onPointerUp={handlePointerUp}
+                  overlayRef={overlayRef}
+                  results={ocrResult.results}
+                  visible={layers.recognition}
+                />
+              )}
             </div>
           )}
         </div>
@@ -649,7 +824,13 @@ function App() {
       <aside className="side-panel action-panel">
         <section>
           <SectionHeading step="03" eyebrow="SELECTION" title="目前選取" />
-          {!selectedBox ? (
+          {viewMode === "recognition" ? (
+            <div className="recognition-summary">
+              <strong>{ocrResult?.results.length || 0}</strong>
+              <span>筆 OCR 辨識結果</span>
+              <small>可使用工作區右上角圖層按鈕進行對比</small>
+            </div>
+          ) : !selectedBox ? (
             <div className="empty-card">尚未選取任何裁切框</div>
           ) : (
             <dl className="selection-details">
@@ -664,19 +845,23 @@ function App() {
           <SectionHeading step="04" eyebrow="OUTPUT" title="輸出作業" />
           <button
             className="ghost-button full-width action-button"
-            disabled={busy || boxes.length === 0}
+            disabled={busy || boxes.length === 0 || viewMode === "recognition"}
             onClick={() => submitJob("crop")}
           >儲存標註資料</button>
           <button
             className="primary-button"
             type="button"
+            disabled={busy || boxes.length === 0 || viewMode === "recognition"}
+            onClick={submitRecognition}
           >
-            <span>執行辨識</span>
+            <span>{recognizing ? "辨識處理中" : "執行辨識"}</span>
             <span aria-hidden="true">→</span>
           </button>
           {jobResult && (
             <div className="job-result" key={jobResult.revision}>
-              <span className="result-status">{jobResult.action === "crop" ? "裁切完成" : "標註已儲存"}</span>
+              <span className="result-status">
+                {jobResult.action === "ocr" ? "辨識完成" : jobResult.action === "crop" ? "裁切完成" : "標註已儲存"}
+              </span>
               <strong className="result-path">{jobResult.output_dir}</strong>
               <div className="crop-preview-list">
                 {jobResult.files

@@ -514,9 +514,19 @@ kbd {
   max-width: 100%;
   max-height: calc(100vh - 230px);
   user-select: none;
+  transition: opacity 220ms ease;
 }
 
-.crop-overlay {
+.drawing-surface.recognition-mode img {
+  opacity: 0.59;
+}
+
+.drawing-surface.recognition-mode img.layer-hidden {
+  opacity: 0;
+}
+
+.crop-overlay,
+.recognition-overlay {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -534,6 +544,38 @@ kbd {
 
 .canvas-viewport.is-panning .crop-overlay.select-mode {
   cursor: grabbing;
+}
+
+.recognition-overlay {
+  overflow: visible;
+  cursor: grab;
+}
+
+.canvas-viewport.is-panning .recognition-overlay {
+  cursor: grabbing;
+}
+
+.recognition-box {
+  fill: #fff200;
+  fill-opacity: 0.52;
+  stroke: none;
+}
+
+.recognition-leader {
+  stroke: #756900;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.recognition-text {
+  fill: #1d241e;
+  stroke: rgba(255, 253, 248, 0.96);
+  stroke-width: 9px;
+  paint-order: stroke fill;
+  font-size: 38px;
+  font-weight: 900;
+  dominant-baseline: central;
+  text-rendering: geometricPrecision;
 }
 
 .crop-overlay .box-group {
@@ -631,6 +673,98 @@ kbd {
   font-size: 12px;
 }
 
+.layer-panel {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  z-index: 4;
+  display: grid;
+  grid-template-columns: 150px;
+  gap: 5px;
+  padding: 6px;
+  border: 1px solid var(--green-dark);
+  background: rgba(255, 253, 248, 0.94);
+  box-shadow: 4px 4px 0 rgba(12, 52, 53, 0.14);
+  backdrop-filter: blur(8px);
+}
+
+.layer-panel-title {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--amber);
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.15em;
+}
+
+.layer-panel button {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 35px;
+  padding: 5px 6px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  background: var(--paper);
+  text-align: left;
+}
+
+.layer-panel button + button {
+  margin-top: 0;
+}
+
+.layer-panel button.active {
+  color: var(--green-dark);
+  border-color: var(--green);
+  background: white;
+}
+
+.layer-panel button span,
+.layer-panel button strong,
+.layer-panel button small {
+  display: block;
+}
+
+.layer-panel button strong {
+  font-size: 12px;
+}
+
+.layer-panel button small {
+  display: none;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.layer-panel button b {
+  color: var(--line-strong);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+
+.layer-panel button.active b {
+  color: var(--green);
+}
+
+.layer-swatch {
+  width: 17px;
+  height: 17px;
+  border: 1px solid var(--line-strong);
+}
+
+.recognition-swatch {
+  background: rgba(255, 242, 0, 0.62);
+}
+
+.drawing-swatch {
+  background:
+    linear-gradient(rgba(36, 90, 141, 0.18) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(36, 90, 141, 0.18) 1px, white 1px);
+  background-size: 6px 6px;
+}
+
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
@@ -675,6 +809,54 @@ kbd {
   font-size: 13px;
   font-weight: 800;
   text-align: right;
+}
+
+.recognition-mode-label {
+  display: grid;
+  justify-items: center;
+  padding: 9px 28px;
+  border-right: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+}
+
+.recognition-mode-label span {
+  color: var(--amber);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+}
+
+.recognition-mode-label strong {
+  margin-top: 3px;
+  font-size: 17px;
+}
+
+.recognition-summary {
+  display: grid;
+  padding: 17px;
+  border: 1px solid rgba(15, 91, 82, 0.35);
+  background: var(--green-soft);
+}
+
+.recognition-summary strong {
+  color: var(--green-dark);
+  font-family: Georgia, "Microsoft JhengHei", serif;
+  font-size: 36px;
+  line-height: 1;
+}
+
+.recognition-summary span {
+  margin-top: 5px;
+  color: var(--green-dark);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.recognition-summary small {
+  margin-top: 9px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .output-section {

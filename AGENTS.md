@@ -2,7 +2,7 @@
 
 ## Project Purpose
 
-This repository is an engineering drawing crop workbench with a standalone OCR test pipeline. The web UI currently ends at producing page snapshots, crop images, and box coordinate metadata; OCR remains a command-line workflow.
+This repository is an engineering drawing crop and OCR workbench. The web UI produces page snapshots, crop images, box coordinate metadata, and an OCR result overlay. OCR can also be run independently from the command line for testing.
 
 ## Architecture
 
@@ -11,7 +11,7 @@ This repository is an engineering drawing crop workbench with a standalone OCR t
 - `static/`: generated React production build served by FastAPI.
 - `test-ED/`: source PDFs available to the UI.
 - `output/`: generated job folders; do not commit.
-- `src/ocr.py`: standalone GLM-OCR and GD symbol-classifier test runner.
+- `src/ocr.py`: GLM-OCR and GD symbol-classifier runtime plus CLI test runner.
 - `src/symbol-classifierdata/`: runtime GD classifier helper and checkpoint.
 - `tests/`: API and crop behavior tests.
 
@@ -31,7 +31,7 @@ Frontend boxes use the original pixel coordinates of the preview PNG rendered at
 - Use `uv pip install --python .\.venv\Scripts\python.exe ...` for dependencies.
 - Never commit files generated under `output/`.
 - Keep OCR output as one `ocr_results.json` file inside the selected job folder.
-- Keep OCR testing independent from the web UI until OCR integration is explicitly requested.
+- Keep the CLI OCR test path available through `--test <output-folder>`.
 - Do not manually edit generated files under `static/`; edit React source under `frontend/src/`.
 
 ## Run Locally
@@ -48,5 +48,5 @@ cd ..
 ## Run OCR Test
 
 ```powershell
-.\.venv\Scripts\python.exe .\src\ocr.py
+.\.venv\Scripts\python.exe .\src\ocr.py --test <output-folder>
 ```

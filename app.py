@@ -5,6 +5,7 @@ import io
 import json
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Literal
 
 import fitz
@@ -39,6 +40,7 @@ class Box(BaseModel):
 class JobRequest(BaseModel):
     document: str
     page: int = Field(ge=1)
+    load_id: str = Field(pattern=r"^\d{8}T\d{9}Z$")
     boxes: list[Box]
     action: Literal["save", "crop"]
 
@@ -60,6 +62,32 @@ def render_page(document: str, page_number: int, scale: float = PREVIEW_SCALE) -
             raise HTTPException(status_code=404, detail="Page not found")
         pixmap = pdf[page_number - 1].get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
         return pixmap.tobytes("png")
+
+
+def get_job_dir(job_id: str) -> Path:
+    if Path(job_id).name != job_id:
+        raise HTTPException(status_code=400, detail="Invalid job ID")
+
+    job_dir = OUTPUT_DIR / job_id
+    if not job_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job_dir
+
+
+def run_ocr_job(job_dir: Path) -> Path:
+    from src import ocr
+
+    return ocr.run_ocr(
+        SimpleNamespace(
+            input_dir=job_dir,
+            classifier_checkpoint=ocr.CLASSIFIER_CHECKPOINT,
+            classifier_threshold=0.4,
+            diameter_threshold=0.99,
+            device="auto",
+            max_new_tokens=128,
+            allow_model_download=False,
+        )
+    )
 
 
 @app.get("/")
@@ -99,7 +127,7 @@ def create_job(request: JobRequest) -> dict[str, object]:
         for character in document_stem
     ).strip("_") or "document"
     document_hash = hashlib.sha256(request.document.encode("utf-8")).hexdigest()[:8]
-    job_id = f"{safe_document_stem}_{document_hash}_page_{request.page:03d}"
+    job_id = f"{request.load_id}_{safe_document_stem}_{document_hash}_page_{request.page:03d}"
     job_dir = OUTPUT_DIR / job_id
     job_dir.mkdir(exist_ok=True)
     (job_dir / "snapshot.png").write_bytes(snapshot)
@@ -134,6 +162,7 @@ def create_job(request: JobRequest) -> dict[str, object]:
     metadata = {
         "job_id": job_id,
         "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "load_id": request.load_id,
         "action": request.action,
         "document": request.document,
         "page": request.page,
@@ -150,4 +179,22 @@ def create_job(request: JobRequest) -> dict[str, object]:
         "job_id": job_id,
         "output_dir": f"output/{job_id}",
         "files": result_files,
+    }
+
+
+@app.post("/api/jobs/{job_id}/ocr")
+def recognize_job(job_id: str) -> dict[str, object]:
+    job_dir = get_job_dir(job_id)
+    try:
+        output_path = run_ocr_job(job_dir)
+        result = json.loads(output_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=f"OCR failed: {error}") from error
+
+    return {
+        **result,
+        "output_dir": f"output/{job_id}",
+        "file": f"/output/{job_id}/ocr_results.json",
     }
