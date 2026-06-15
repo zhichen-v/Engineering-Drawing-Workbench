@@ -39,3 +39,34 @@ cd ..
 cd frontend
 npm run build
 ```
+
+## OCR 測試
+
+OCR 目前是獨立命令列流程，不會操作網頁介面。預設讀取：
+
+```text
+output/59105-0SBG000_81c9341e_page_001/crop_*.png
+output/59105-0SBG000_81c9341e_page_001/boxes.json
+```
+
+`requirements.txt` 使用 CUDA 12.6 版 Torch，安裝後會以 NVIDIA GPU 執行。
+
+執行：
+
+```powershell
+.\.venv\Scripts\python.exe .\src\ocr.py
+```
+
+GLM-OCR 模型預設只從本機 Hugging Face cache 載入。若本機沒有模型，才使用：
+
+```powershell
+.\.venv\Scripts\python.exe .\src\ocr.py --allow-model-download
+```
+
+結果只會寫入一個 JSON：
+
+```text
+output/59105-0SBG000_81c9341e_page_001/ocr_results.json
+```
+
+每筆結果包含 `crop_number`、原始 `box` 座標與 `ocr`。GD 符號辨識成功時，`ocr` 開頭會包含例如 `[GD_FLATNESS]` 的標記；直徑分類器辨識成功時會補上 `⌀`。

@@ -1,7 +1,11 @@
+.env
+.cache/
 .venv/
 .codegraph/
 __pycache__/
 .pytest_cache/
 output/
+!src/symbol-classifierdata/output/
+!src/symbol-classifierdata/output/best.pt
 frontend/node_modules/
 test-ED/*

@@ -482,7 +482,7 @@ function App() {
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.detail || "輸出失敗");
-      setJobResult({ ...result, action });
+      setJobResult({ ...result, action, revision: Date.now() });
       showToast(action === "crop" ? "裁切結果已輸出" : "標註資料已儲存");
     } catch (error) {
       showToast(error.message);
@@ -664,26 +664,37 @@ function App() {
           <SectionHeading step="04" eyebrow="OUTPUT" title="輸出作業" />
           <button
             className="ghost-button full-width action-button"
-            disabled={busy || !documentName}
-            onClick={() => submitJob("save")}
+            disabled={busy || boxes.length === 0}
+            onClick={() => submitJob("crop")}
           >儲存標註資料</button>
           <button
             className="primary-button"
-            disabled={busy || boxes.length === 0}
-            onClick={() => submitJob("crop")}
+            type="button"
           >
-            <span>{busy ? "處理中..." : "執行裁切"}</span>
+            <span>執行辨識</span>
             <span aria-hidden="true">→</span>
           </button>
           {jobResult && (
-            <div className="job-result">
+            <div className="job-result" key={jobResult.revision}>
               <span className="result-status">{jobResult.action === "crop" ? "裁切完成" : "標註已儲存"}</span>
-              <strong>{jobResult.output_dir}</strong>
-              {jobResult.files.slice(1).map((file, index) => (
-                <a key={file} href={file} target="_blank" rel="noreferrer">
-                  開啟 {index === jobResult.files.length - 2 ? "boxes.json" : `crop ${String(index + 1).padStart(3, "0")}`}
-                </a>
-              ))}
+              <strong className="result-path">{jobResult.output_dir}</strong>
+              <div className="crop-preview-list">
+                {jobResult.files
+                  .filter((file) => /\/crop_\d+\.png$/.test(file))
+                  .map((file) => {
+                    const boxNumber = file.match(/crop_(\d+)\.png$/)?.[1];
+                    return (
+                      <figure className="crop-preview" key={file}>
+                        <figcaption><span>BOX</span><b>#{boxNumber}</b></figcaption>
+                        <img
+                          src={`${file}?revision=${jobResult.revision}`}
+                          alt={`Box ${boxNumber} 裁切圖片`}
+                          loading="lazy"
+                        />
+                      </figure>
+                    );
+                  })}
+              </div>
             </div>
           )}
         </section>

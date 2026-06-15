@@ -1,7 +1,13 @@
+--extra-index-url https://download.pytorch.org/whl/cu126
+
+accelerate
 fastapi==0.136.3
+git+https://github.com/huggingface/transformers.git
 httpx==0.28.1
+numpy
 pillow==12.2.0
 pymupdf==1.27.2.3
 pytest==9.0.3
+torch==2.12.0+cu126
+torchvision==0.27.0+cu126
 uvicorn==0.49.0
-
