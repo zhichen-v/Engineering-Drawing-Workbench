@@ -5,6 +5,9 @@
 ## 安裝與建置
 
 ```powershell
+git clone https://github.com/zhichen-v/Engineering-Drawing-Workbench.git
+cd .\Engineering-Drawing-Workbench
+uv venv --python 3.12
 uv pip install --python .\.venv\Scripts\python.exe -r requirements.txt
 cd frontend
 npm install

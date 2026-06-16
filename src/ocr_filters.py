@@ -85,19 +85,29 @@ def crop_feature_control_regions(
     inset = 2
     crop_top = top_line + inset if top_line is not None else 0
     crop_bottom = bottom_line - inset if bottom_line is not None else image.height
+    minimum_cell_ink = max(3, round((crop_bottom - crop_top) * 0.2))
     if len(vertical_lines) < 2:
-        return None
-
-    first_vertical = vertical_lines[0]
-    leading_region = dark[crop_top:crop_bottom, : max(0, first_vertical - inset)]
-    leading_ink = int(leading_region.sum())
-    has_leading_symbol = leading_ink >= max(3, round((crop_bottom - crop_top) * 0.2))
-    if first_vertical <= edge_limit or not has_leading_symbol:
-        left, right = first_vertical, vertical_lines[1]
-        crop_left = left + inset
+        if len(vertical_lines) != 1 or top_line is None or bottom_line is None:
+            return None
+        right = vertical_lines[0]
+        if right <= edge_limit:
+            return None
+        leading_region = dark[crop_top:crop_bottom, : max(0, right - inset)]
+        value_region = dark[crop_top:crop_bottom, min(image.width, right + inset) :]
+        if int(leading_region.sum()) < minimum_cell_ink or int(value_region.sum()) < minimum_cell_ink:
+            return None
+        crop_left = 0
     else:
-        left, right = 0, first_vertical
-        crop_left = left
+        first_vertical = vertical_lines[0]
+        leading_region = dark[crop_top:crop_bottom, : max(0, first_vertical - inset)]
+        leading_ink = int(leading_region.sum())
+        has_leading_symbol = leading_ink >= minimum_cell_ink
+        if first_vertical <= edge_limit or not has_leading_symbol:
+            left, right = first_vertical, vertical_lines[1]
+            crop_left = left + inset
+        else:
+            left, right = 0, first_vertical
+            crop_left = left
 
     crop_right = right - inset
     if crop_right - crop_left <= inset * 2 or crop_bottom - crop_top <= inset * 2:

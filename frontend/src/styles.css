@@ -579,7 +579,7 @@ kbd {
   stroke-width: 9px;
   paint-order: stroke fill;
   font-size: 38px;
-  font-weight: 900;
+  font-weight: 500;
   dominant-baseline: central;
   text-rendering: geometricPrecision;
 }

@@ -60,6 +60,23 @@ def test_crop_feature_control_regions_accepts_leading_whitespace_before_frame():
     assert values.width > 0
 
 
+def test_crop_feature_control_regions_accepts_cropped_outer_vertical_frame():
+    image = Image.new("RGB", (138, 51), "white")
+    draw = ImageDraw.Draw(image)
+    draw.line((0, 3, 137, 3), fill="black")
+    draw.line((0, 46, 137, 46), fill="black")
+    draw.line((62, 3, 62, 46), fill="black")
+    draw.polygon(((3, 34), (16, 12), (47, 12), (34, 34)), outline="black")
+    draw.text((72, 8), "0.01", fill="black")
+
+    regions = crop_feature_control_regions(image)
+
+    assert regions is not None
+    symbol, values = regions
+    assert symbol.size == (128, 128)
+    assert values.width > 0
+
+
 def test_crop_feature_control_regions_rejects_text_without_horizontal_frame():
     image = Image.new("RGB", (191, 32), "white")
     draw = ImageDraw.Draw(image)
