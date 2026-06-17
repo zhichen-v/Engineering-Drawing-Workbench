@@ -50,6 +50,35 @@ function resizedBox(original, handle, point, imageSize) {
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
+function getFramePage(frameDetection, page) {
+  return frameDetection?.pages?.find((framePage) => framePage.page === page) || null;
+}
+
+function framePageIsReady(framePage) {
+  return Boolean(framePage?.columns?.length && framePage?.rows?.length);
+}
+
+function locateFrameCell(framePage, box) {
+  if (!framePageIsReady(framePage) || !box) return null;
+  const centerX = box.x + box.width / 2;
+  const centerY = box.y + box.height / 2;
+  const column = framePage.columns.find((cell) => centerX >= cell.min && centerX <= cell.max);
+  const row = framePage.rows.find((cell) => centerY >= cell.min && centerY <= cell.max);
+  return row && column ? `${row.label}${column.label}` : null;
+}
+
+function boxCenter(box) {
+  if (!box) return null;
+  return {
+    x: box.x + box.width / 2,
+    y: box.y + box.height / 2,
+  };
+}
+
+function delay(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 function SectionHeading({ step, eyebrow, title }) {
   return (
     <div className="section-heading">
@@ -74,9 +103,25 @@ function CropIcon() {
   return <span className="crop-icon" aria-hidden="true" />;
 }
 
-function ToolButton({ active, icon, title, description, shortcut, onClick }) {
+function FrameIcon() {
+  return <span className="frame-icon" aria-hidden="true" />;
+}
+
+function LoadingArc() {
   return (
-    <button className={`tool-button ${active ? "active" : ""}`} onClick={onClick}>
+    <svg className="initialized-loader" viewBox="0 0 200 200" aria-hidden="true">
+      <circle className="initialized-loader__arc" cx="100" cy="100" r="78" pathLength="100" />
+    </svg>
+  );
+}
+
+function ToolButton({ active, disabled = false, icon, title, description, shortcut, onClick }) {
+  return (
+    <button
+      className={`tool-button ${active ? "active" : ""}`}
+      disabled={disabled}
+      onClick={onClick}
+    >
       {icon}
       <div><strong>{title}</strong><small>{description}</small></div>
       <kbd>{shortcut}</kbd>
@@ -211,6 +256,19 @@ function CropOverlay({
   );
 }
 
+function FrameDetectionOverlay({ revision, src, visible }) {
+  if (!src || !visible) return null;
+  return (
+    <img
+      className="frame-detection-overlay"
+      src={`${src}?revision=${revision}`}
+      alt=""
+      aria-hidden="true"
+      draggable="false"
+    />
+  );
+}
+
 function RecognitionOverlay({
   imageSize,
   onPointerDown,
@@ -292,6 +350,11 @@ function App() {
   const [jobResult, setJobResult] = useState(null);
   const [ocrResult, setOcrResult] = useState(null);
   const [recognizing, setRecognizing] = useState(false);
+  const [ocrStage, setOcrStage] = useState("model_loading");
+  const [ocrProgress, setOcrProgress] = useState({ current: 0, total: 0, reused: 0, crop: "" });
+  const [frameDetection, setFrameDetection] = useState(null);
+  const [detectingFrame, setDetectingFrame] = useState(false);
+  const [frameLayerVisible, setFrameLayerVisible] = useState(true);
   const [viewMode, setViewMode] = useState("edit");
   const [recognitionVisible, setRecognitionVisible] = useState(true);
   const [toast, setToast] = useState("");
@@ -319,6 +382,28 @@ function App() {
   const currentOcrResults = (ocrResult?.results || []).filter(
     (result) => (result.box.page || 1) === page,
   );
+  const currentFramePage = getFramePage(frameDetection, page);
+  const frameGridReady = framePageIsReady(currentFramePage);
+  const frameOverlayUrl = frameDetection?.overlays?.[String(page)] || "";
+  const selectedFrameLocation = locateFrameCell(currentFramePage, selectedBox);
+  const selectedCenter = boxCenter(selectedBox);
+  const ocrProgressText = ocrProgress.total
+    ? `${Math.min(ocrProgress.current, ocrProgress.total)} / ${ocrProgress.total}`
+    : "";
+  const canvasBusyTitle = detectingFrame
+    ? "執行圖框識別中"
+    : recognizing
+      ? (ocrStage === "model_loading" ? "載入 OCR 模型中" : "OCR 辨識中")
+      : "載入工程圖面中";
+  const canvasBusyDetail = detectingFrame
+    ? "正在建立圖框座標與 overlay"
+    : recognizing
+      ? (
+        ocrStage === "model_loading"
+          ? "正在準備 GLM-OCR 與符號模型，首次啟動會較久"
+          : `模型已就緒，正在辨識 crop ${ocrProgressText || ""}`.trim()
+      )
+      : "正在建立高解析度預覽";
 
   function showToast(message) {
     setToast(message);
@@ -352,6 +437,10 @@ function App() {
   }
 
   function selectTool(tool) {
+    if (!frameGridReady) {
+      showToast("請先執行圖框識別");
+      return;
+    }
     setActiveTool(tool);
     setDraft(null);
     setInteraction(null);
@@ -365,6 +454,11 @@ function App() {
     loadIdRef.current = createLoadId();
     setJobResult(null);
     setOcrResult(null);
+    setOcrStage("model_loading");
+    setOcrProgress({ current: 0, total: 0, reused: 0, crop: "" });
+    setFrameDetection(null);
+    setDetectingFrame(false);
+    setFrameLayerVisible(true);
     setViewMode("edit");
     setRecognitionVisible(true);
     resetBoxes();
@@ -417,6 +511,7 @@ function App() {
     function handleKeyDown(event) {
       if (["INPUT", "SELECT", "TEXTAREA"].includes(event.target.tagName)) return;
       if (viewMode !== "edit") return;
+      if (!frameGridReady) return;
       if (event.key === "Delete") deleteSelected();
       if (event.key.toLowerCase() === "v") selectTool("select");
       if (event.key.toLowerCase() === "c") selectTool("crop");
@@ -576,7 +671,42 @@ function App() {
     setPage(nextPage);
   }
 
+  async function submitFrameDetection() {
+    setBusy(true);
+    setDetectingFrame(true);
+    try {
+      const response = await fetch("/api/frame-detection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          document: documentName,
+          page,
+          load_id: loadIdRef.current,
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || "圖框識別失敗");
+
+      const nextFrameDetection = { ...result, revision: Date.now() };
+      const readyPages = (result.pages || []).filter(framePageIsReady).length;
+      const currentPageReady = framePageIsReady(getFramePage(nextFrameDetection, page));
+      setFrameDetection(nextFrameDetection);
+      setFrameLayerVisible(true);
+      setActiveTool("select");
+      showToast(currentPageReady ? `圖框識別完成，${readyPages} 頁可定位` : "目前頁面尚未取得格位座標");
+    } catch (error) {
+      showToast(error.message);
+    } finally {
+      setDetectingFrame(false);
+      setBusy(false);
+    }
+  }
+
   async function submitJob(action) {
+    if (!frameGridReady) {
+      showToast("請先執行圖框識別");
+      return;
+    }
     setBusy(true);
     setJobResult(null);
     try {
@@ -602,9 +732,39 @@ function App() {
     }
   }
 
+  function applyOcrTaskStatus(task) {
+    setOcrStage(task.stage || "model_loading");
+    setOcrProgress({
+      current: Number(task.current || 0),
+      total: Number(task.total || 0),
+      reused: Number(task.reused || 0),
+      crop: task.crop || "",
+    });
+  }
+
+  async function waitForOcrTask(jobId, taskId) {
+    while (true) {
+      await delay(650);
+      const response = await fetch(
+        `/api/jobs/${encodeURIComponent(jobId)}/ocr/tasks/${encodeURIComponent(taskId)}`,
+      );
+      const task = await response.json();
+      if (!response.ok) throw new Error(task.detail || "無法取得 OCR 進度");
+      applyOcrTaskStatus(task);
+      if (task.status === "completed") return task.result;
+      if (task.status === "failed") throw new Error(task.error || task.message || "辨識失敗");
+    }
+  }
+
   async function submitRecognition() {
+    if (!frameGridReady) {
+      showToast("請先執行圖框識別");
+      return;
+    }
     setBusy(true);
     setRecognizing(true);
+    setOcrStage("model_loading");
+    setOcrProgress({ current: 0, total: documentBoxes.length, reused: 0, crop: "" });
     setJobResult(null);
     try {
       const cropResponse = await fetch("/api/jobs", {
@@ -621,11 +781,14 @@ function App() {
       const cropResult = await cropResponse.json();
       if (!cropResponse.ok) throw new Error(cropResult.detail || "裁切資料更新失敗");
 
-      const response = await fetch(`/api/jobs/${encodeURIComponent(cropResult.job_id)}/ocr`, {
+      const response = await fetch(`/api/jobs/${encodeURIComponent(cropResult.job_id)}/ocr/tasks`, {
         method: "POST",
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.detail || "辨識失敗");
+      const task = await response.json();
+      if (!response.ok) throw new Error(task.detail || "辨識任務啟動失敗");
+      applyOcrTaskStatus(task);
+
+      const result = await waitForOcrTask(cropResult.job_id, task.task_id);
 
       setOcrResult(result);
       setJobResult({ ...cropResult, action: "ocr", revision: Date.now() });
@@ -711,7 +874,17 @@ function App() {
           ) : (
             <>
               <ToolButton
-                active={activeTool === "select"}
+                active={frameGridReady}
+                disabled={busy || loading || !documentName}
+                icon={<FrameIcon />}
+                title={detectingFrame ? "圖框識別中" : "圖框識別"}
+                description={frameGridReady ? `${currentFramePage.columns.length} 欄 / ${currentFramePage.rows.length} 列已定位` : "標註前先建立格位座標"}
+                shortcut={frameGridReady ? "OK" : "REQ"}
+                onClick={submitFrameDetection}
+              />
+              <ToolButton
+                active={frameGridReady && activeTool === "select"}
+                disabled={busy || !frameGridReady}
                 icon={<SelectIcon />}
                 title="選取／調整"
                 description="選取、移動或調整 box 大小"
@@ -719,21 +892,22 @@ function App() {
                 onClick={() => selectTool("select")}
               />
               <ToolButton
-                active={activeTool === "crop"}
+                active={frameGridReady && activeTool === "crop"}
+                disabled={busy || !frameGridReady}
                 icon={<CropIcon />}
                 title="框選裁切區域"
                 description="空白處建立，框可直接調整"
                 shortcut="C"
                 onClick={() => selectTool("crop")}
               />
-              <button className="tool-button danger" disabled={busy || selectedId === null} onClick={deleteSelected}>
+              <button className="tool-button danger" disabled={busy || !frameGridReady || selectedId === null} onClick={deleteSelected}>
                 <span className="delete-icon" aria-hidden="true">×</span>
                 <div><strong>刪除選取框</strong><small>其餘編號會自動補位</small></div>
                 <kbd>DEL</kbd>
               </button>
               <button
                 className="ghost-button full-width"
-                disabled={busy || documentBoxes.length === 0}
+                disabled={busy || !frameGridReady || documentBoxes.length === 0}
                 onClick={() => {
                   if (window.confirm("確定清除全部框選嗎？")) {
                     resetBoxes();
@@ -773,31 +947,44 @@ function App() {
           className={`canvas-viewport ${interaction?.type === "pan" ? "is-panning" : ""}`}
           onWheel={handleWheel}
         >
-          {(loading || recognizing) && (
+          {(loading || recognizing || detectingFrame) && (
             <div className="loading-state" role="status">
-              <span />
-              <strong>{recognizing ? "執行圖面辨識中" : "載入工程圖面中"}</strong>
-              <small>{recognizing ? "正在分析 crop 圖片與符號" : "正在建立高解析度預覽"}</small>
+              <LoadingArc />
+              <strong>{canvasBusyTitle}</strong>
+              <small>{canvasBusyDetail}</small>
             </div>
           )}
-          {viewMode === "recognition" && (
-            <div className="recognition-toggle">
-              <button
-                className={recognitionVisible ? "active" : ""}
-                type="button"
-                onClick={() => setRecognitionVisible((current) => !current)}
-              >
-                <i className="layer-swatch recognition-swatch" />
-                <span><strong>OCR 標註</strong><small>螢光辨識結果</small></span>
-                <b>{recognitionVisible ? "ON" : "OFF"}</b>
-              </button>
+          {(frameOverlayUrl || (viewMode === "recognition" && ocrResult)) && (
+            <div className="recognition-toggle layer-toggle">
+              {frameOverlayUrl && (
+                <button
+                  className={frameLayerVisible ? "active" : ""}
+                  type="button"
+                  onClick={() => setFrameLayerVisible((current) => !current)}
+                >
+                  <i className="layer-swatch frame-swatch" />
+                  <span><strong>圖框 Layer</strong><small>格位座標 overlay</small></span>
+                  <b>{frameLayerVisible ? "ON" : "OFF"}</b>
+                </button>
+              )}
+              {viewMode === "recognition" && ocrResult && (
+                <button
+                  className={recognitionVisible ? "active" : ""}
+                  type="button"
+                  onClick={() => setRecognitionVisible((current) => !current)}
+                >
+                  <i className="layer-swatch recognition-swatch" />
+                  <span><strong>OCR 標註</strong><small>螢光辨識結果</small></span>
+                  <b>{recognitionVisible ? "ON" : "OFF"}</b>
+                </button>
+              )}
             </div>
           )}
           {loadError && !loading && <div className="error-state">{loadError}</div>}
           {previewUrl && (
             <div
               ref={drawingSurfaceRef}
-              className={`drawing-surface ${loading || recognizing ? "is-loading" : ""} ${viewMode === "recognition" ? "recognition-mode" : ""}`}
+              className={`drawing-surface ${loading || recognizing || detectingFrame ? "is-loading" : ""} ${viewMode === "recognition" ? "recognition-mode" : ""}`}
               style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
             >
               <img
@@ -818,7 +1005,12 @@ function App() {
                   setLoadError("PDF 頁面預覽載入失敗");
                 }}
               />
-              {imageSize.width > 0 && viewMode === "edit" && (
+              <FrameDetectionOverlay
+                revision={frameDetection?.revision}
+                src={frameOverlayUrl}
+                visible={frameLayerVisible}
+              />
+              {imageSize.width > 0 && viewMode === "edit" && frameGridReady && (
                 <CropOverlay
                   activeTool={activeTool}
                   boxes={boxes}
@@ -863,7 +1055,9 @@ function App() {
           ) : (
             <dl className="selection-details">
               <div><dt>BOX ID</dt><dd>#{String(selectedBox.id).padStart(2, "0")}</dd></div>
+              <div><dt>圖框位置</dt><dd>{selectedFrameLocation || "未定位"}</dd></div>
               <div><dt>座標</dt><dd>X {Math.round(selectedBox.x)} / Y {Math.round(selectedBox.y)}</dd></div>
+              <div><dt>判定點</dt><dd>X {Math.round(selectedCenter.x)} / Y {Math.round(selectedCenter.y)}</dd></div>
               <div><dt>尺寸</dt><dd>{Math.round(selectedBox.width)} × {Math.round(selectedBox.height)} PX</dd></div>
             </dl>
           )}
@@ -873,13 +1067,13 @@ function App() {
           <SectionHeading step="04" eyebrow="OUTPUT" title="輸出作業" />
           <button
             className="ghost-button full-width action-button"
-            disabled={busy || documentBoxes.length === 0 || viewMode === "recognition"}
+            disabled={busy || !frameGridReady || documentBoxes.length === 0 || viewMode === "recognition"}
             onClick={() => submitJob("crop")}
           >儲存標註資料</button>
           <button
             className="primary-button"
             type="button"
-            disabled={busy || documentBoxes.length === 0 || viewMode === "recognition"}
+            disabled={busy || !frameGridReady || documentBoxes.length === 0 || viewMode === "recognition"}
             onClick={submitRecognition}
           >
             <span>{recognizing ? "辨識處理中" : "執行辨識"}</span>

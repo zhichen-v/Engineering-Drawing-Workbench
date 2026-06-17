@@ -5,6 +5,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from typing import Any, Callable
 
 import torch
 from PIL import Image
@@ -146,7 +147,10 @@ def resolve_test_input_dir(folder_name: str) -> Path:
     return input_dir
 
 
-def run_ocr(args: argparse.Namespace) -> Path:
+def run_ocr(
+    args: argparse.Namespace,
+    progress_callback: Callable[[str, dict[str, Any]], None] | None = None,
+) -> Path:
     input_dir = args.input_dir.resolve()
     crops = crop_inputs(input_dir)
     if not crops:
@@ -181,13 +185,33 @@ def run_ocr(args: argparse.Namespace) -> Path:
 
     print(f"Reusing {len(results_by_number)} unchanged OCR result(s).")
     if pending:
+        if progress_callback:
+            progress_callback(
+                "model_loading",
+                {"current": 0, "total": len(pending), "reused": len(results_by_number)},
+            )
         device = select_device(args.device)
         print(f"Using device: {device}")
         classifier = load_symbol_classifier(args.classifier_checkpoint.resolve(), device)
         print("Loading GLM-OCR from local cache..." if not args.allow_model_download else "Loading GLM-OCR...")
         processor, model = load_base_model(device, args.allow_model_download)
+        if progress_callback:
+            progress_callback(
+                "recognizing",
+                {"current": 0, "total": len(pending), "reused": len(results_by_number)},
+            )
 
     for index, (crop_number, path) in enumerate(pending, start=1):
+        if progress_callback:
+            progress_callback(
+                "recognizing",
+                {
+                    "current": index - 1,
+                    "total": len(pending),
+                    "crop": path.name,
+                    "reused": len(results_by_number),
+                },
+            )
         print(f"[{index}/{len(pending)}] OCR: {path.name}")
         with Image.open(path) as opened:
             image = opened.convert("RGB")
@@ -216,6 +240,16 @@ def run_ocr(args: argparse.Namespace) -> Path:
             "frame_location": boxes[crop_number].get("frame_location"),
             "ocr": text,
         }
+        if progress_callback:
+            progress_callback(
+                "recognizing",
+                {
+                    "current": index,
+                    "total": len(pending),
+                    "crop": path.name,
+                    "reused": len(results_by_number),
+                },
+            )
 
     results = [results_by_number[crop_number] for crop_number, _ in crops]
     output_path.write_text(

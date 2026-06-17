@@ -213,6 +213,40 @@ def test_run_ocr_only_recognizes_changed_boxes(tmp_path, monkeypatch):
     assert [item["ocr"] for item in result["results"]] == ["KEEP", "UPDATED"]
 
 
+def test_run_ocr_reports_model_loading_before_recognition(tmp_path, monkeypatch):
+    box = {"id": 1, "page": 1, "x": 10, "y": 12, "width": 30, "height": 24}
+    (tmp_path / "boxes.json").write_text(
+        json.dumps({"job_id": "test-job", "boxes": [box]}),
+        encoding="utf-8",
+    )
+    Image.new("RGB", (30, 24), "white").save(tmp_path / "crop_001.png")
+
+    stages = []
+    monkeypatch.setattr(ocr, "select_device", lambda *_: "cpu")
+    monkeypatch.setattr(ocr, "load_symbol_classifier", lambda *_: {})
+    monkeypatch.setattr(ocr, "load_base_model", lambda *_: (object(), object()))
+    monkeypatch.setattr(ocr, "classify_gd_tag", lambda *_: None)
+    monkeypatch.setattr(ocr, "has_diameter_symbol", lambda *_: False)
+    monkeypatch.setattr(ocr, "recognize_image", lambda *_: "UPDATED")
+
+    ocr.run_ocr(
+        SimpleNamespace(
+            input_dir=tmp_path,
+            classifier_checkpoint=Path("unused.pt"),
+            classifier_threshold=0.4,
+            diameter_threshold=0.99,
+            device="auto",
+            max_new_tokens=128,
+            allow_model_download=False,
+        ),
+        progress_callback=lambda stage, details: stages.append((stage, details["current"])),
+    )
+
+    assert stages[0] == ("model_loading", 0)
+    assert ("recognizing", 0) in stages
+    assert stages[-1] == ("recognizing", 1)
+
+
 def test_run_ocr_reprocesses_results_from_an_older_version(tmp_path, monkeypatch):
     box = {"id": 1, "page": 1, "x": 10, "y": 12, "width": 30, "height": 24}
     (tmp_path / "boxes.json").write_text(

@@ -225,6 +225,32 @@ def test_crop_job_writes_frame_detection_and_frame_location(tmp_path, monkeypatc
     assert frame_result["pages"][0]["source"] == "pdf_text"
 
 
+def test_frame_detection_endpoint_writes_overlay_for_frontend(tmp_path, monkeypatch):
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+
+    monkeypatch.setattr(app_module, "PDF_DIR", ROOT / "test-ED")
+    monkeypatch.setattr(app_module, "OUTPUT_DIR", output_dir)
+
+    response = TestClient(app_module.app).post(
+        "/api/frame-detection",
+        json={
+            "document": "59105-0SBG000.pdf",
+            "page": 1,
+            "load_id": "20260617T040045193Z",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    job_dir = output_dir / payload["job_id"]
+    assert payload["output_dir"] == f"output/{payload['job_id']}"
+    assert payload["file"] == f"/output/{payload['job_id']}/frame_detection/frame_detection_results.json"
+    assert payload["overlays"]["1"] == f"/output/{payload['job_id']}/frame_detection/page_001/overlay.png"
+    assert (job_dir / "frame_detection" / "page_001" / "overlay.png").is_file()
+    assert payload["pages"][0]["source"] == "pdf_text"
+
+
 def test_different_loads_create_separate_time_ordered_outputs(tmp_path, monkeypatch):
     pdf_dir = tmp_path / "test-ED"
     output_dir = tmp_path / "output"
@@ -310,6 +336,47 @@ def test_recognize_job_returns_ocr_results(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert response.json()["results"][0]["ocr"] == "⌀ 0.5"
     assert response.json()["file"] == f"/output/{job_dir.name}/ocr_results.json"
+
+
+def test_ocr_task_reports_progress_and_result(tmp_path, monkeypatch):
+    output_dir = tmp_path / "output"
+    job_dir = output_dir / "20260615T120000000Z_drawing"
+    job_dir.mkdir(parents=True)
+
+    def fake_run_ocr_job(target, progress_callback=None):
+        assert target == job_dir
+        assert progress_callback is not None
+        progress_callback("model_loading", {"current": 0, "total": 1})
+        progress_callback("recognizing", {"current": 1, "total": 1, "crop": "crop_001.png"})
+        result_path = target / "ocr_results.json"
+        result_path.write_text(
+            json.dumps(
+                {
+                    "job_id": job_dir.name,
+                    "results": [{"crop_number": 1, "box": {"id": 1}, "ocr": "0.5"}],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return result_path
+
+    monkeypatch.setattr(app_module, "OUTPUT_DIR", output_dir)
+    monkeypatch.setattr(app_module, "run_ocr_job", fake_run_ocr_job)
+
+    client = TestClient(app_module.app)
+    response = client.post(f"/api/jobs/{job_dir.name}/ocr/tasks")
+
+    assert response.status_code == 202
+    started = response.json()
+    assert started["stage"] == "model_loading"
+
+    status = client.get(f"/api/jobs/{job_dir.name}/ocr/tasks/{started['task_id']}")
+    assert status.status_code == 200
+    payload = status.json()
+    assert payload["status"] == "completed"
+    assert payload["result"]["results"][0]["ocr"] == "0.5"
+    assert payload["result"]["file"] == f"/output/{job_dir.name}/ocr_results.json"
 
 
 def test_recognize_job_requires_existing_job(tmp_path, monkeypatch):

@@ -3,13 +3,16 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
+from threading import Lock
 from types import SimpleNamespace
-from typing import Literal
+from typing import Any, Callable, Literal
+from uuid import uuid4
 
 import fitz
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
@@ -23,6 +26,8 @@ PDF_DIR = BASE_DIR / "test-ED"
 OUTPUT_DIR = BASE_DIR / "output"
 STATIC_DIR = BASE_DIR / "static"
 PREVIEW_SCALE = 2.0
+OCR_TASKS: dict[str, dict[str, Any]] = {}
+OCR_TASK_LOCK = Lock()
 
 OUTPUT_DIR.mkdir(exist_ok=True)
 
@@ -46,6 +51,23 @@ class JobRequest(BaseModel):
     load_id: str = Field(pattern=r"^\d{8}T\d{9}Z$")
     boxes: list[Box]
     action: Literal["save", "crop"]
+
+
+class FrameDetectionRequest(BaseModel):
+    document: str
+    page: int = Field(ge=1)
+    load_id: str = Field(pattern=r"^\d{8}T\d{9}Z$")
+
+
+def build_job_path(document: str, load_id: str) -> tuple[str, Path]:
+    document_stem = Path(document).stem
+    safe_document_stem = "".join(
+        character if character.isalnum() or character in "-_" else "_"
+        for character in document_stem
+    ).strip("_") or "document"
+    document_hash = hashlib.sha256(document.encode("utf-8")).hexdigest()[:8]
+    job_id = f"{load_id}_{safe_document_stem}_{document_hash}"
+    return job_id, OUTPUT_DIR / job_id
 
 
 def get_pdf_path(document: str) -> Path:
@@ -77,7 +99,10 @@ def get_job_dir(job_id: str) -> Path:
     return job_dir
 
 
-def run_ocr_job(job_dir: Path) -> Path:
+def run_ocr_job(
+    job_dir: Path,
+    progress_callback: Callable[[str, dict[str, Any]], None] | None = None,
+) -> Path:
     from src import ocr
 
     return ocr.run_ocr(
@@ -89,8 +114,70 @@ def run_ocr_job(job_dir: Path) -> Path:
             device="auto",
             max_new_tokens=128,
             allow_model_download=False,
-        )
+        ),
+        progress_callback=progress_callback,
     )
+
+
+def build_ocr_result(job_id: str, output_path: Path) -> dict[str, object]:
+    result = json.loads(output_path.read_text(encoding="utf-8"))
+    return {
+        **result,
+        "output_dir": f"output/{job_id}",
+        "file": f"/output/{job_id}/ocr_results.json",
+    }
+
+
+def update_ocr_task(task_key: str, **updates: Any) -> dict[str, Any]:
+    with OCR_TASK_LOCK:
+        OCR_TASKS[task_key] = {**OCR_TASKS.get(task_key, {}), **updates}
+        return deepcopy(OCR_TASKS[task_key])
+
+
+def read_ocr_task(job_id: str, task_id: str) -> dict[str, Any]:
+    with OCR_TASK_LOCK:
+        task = OCR_TASKS.get(task_id)
+        if not task or task.get("job_id") != job_id:
+            raise HTTPException(status_code=404, detail="OCR task not found")
+        return deepcopy(task)
+
+
+def run_ocr_task(task_id: str, job_id: str, job_dir: Path) -> None:
+    def report_progress(stage: str, details: dict[str, Any]) -> None:
+        message = "載入 OCR 模型中" if stage == "model_loading" else "OCR 辨識中"
+        update_ocr_task(
+            task_id,
+            status="running",
+            stage=stage,
+            message=message,
+            **details,
+        )
+
+    try:
+        output_path = run_ocr_job(job_dir, progress_callback=report_progress)
+        update_ocr_task(
+            task_id,
+            status="completed",
+            stage="completed",
+            message="OCR 辨識完成",
+            result=build_ocr_result(job_id, output_path),
+        )
+    except (FileNotFoundError, ValueError) as error:
+        update_ocr_task(
+            task_id,
+            status="failed",
+            stage="failed",
+            message=str(error),
+            error=str(error),
+        )
+    except Exception as error:
+        update_ocr_task(
+            task_id,
+            status="failed",
+            stage="failed",
+            message=f"OCR failed: {error}",
+            error=f"OCR failed: {error}",
+        )
 
 
 @app.get("/")
@@ -116,6 +203,50 @@ def preview_page(
     return Response(render_page(document, page_number, scale), media_type="image/png")
 
 
+@app.post("/api/frame-detection")
+def detect_frame(request: FrameDetectionRequest) -> dict[str, object]:
+    pdf_path = get_pdf_path(request.document)
+    job_id, job_dir = build_job_path(request.document, request.load_id)
+    job_dir.mkdir(exist_ok=True)
+
+    with fitz.open(pdf_path) as pdf:
+        if request.page < 1 or request.page > len(pdf):
+            raise HTTPException(status_code=404, detail="Page not found")
+        pages = list(range(1, len(pdf) + 1))
+        images = {
+            page_number: frame_detection.render_page_image(
+                pdf[page_number - 1],
+                PREVIEW_SCALE,
+            )
+            for page_number in pages
+        }
+
+    _, frame_result_path = frame_detection.write_job_frame_detection(
+        request.document,
+        pdf_path,
+        pages,
+        images,
+        job_dir,
+        PREVIEW_SCALE,
+    )
+    frame_result = json.loads(frame_result_path.read_text(encoding="utf-8"))
+    overlays = {
+        str(page_result["page"]): (
+            f"/output/{job_id}/frame_detection/page_{int(page_result['page']):03d}/overlay.png"
+        )
+        for page_result in frame_result["pages"]
+    }
+
+    return {
+        "job_id": job_id,
+        "output_dir": f"output/{job_id}",
+        "file": f"/output/{job_id}/{frame_result_path.relative_to(job_dir).as_posix()}",
+        "overlays": overlays,
+        "pages": frame_result["pages"],
+        "scale": frame_result["scale"],
+    }
+
+
 @app.post("/api/jobs")
 def create_job(request: JobRequest) -> dict[str, object]:
     if request.action == "crop" and not request.boxes:
@@ -125,14 +256,7 @@ def create_job(request: JobRequest) -> dict[str, object]:
         raise HTTPException(status_code=400, detail="Box IDs must be unique across pages")
 
     pdf_path = get_pdf_path(request.document)
-    document_stem = Path(request.document).stem
-    safe_document_stem = "".join(
-        character if character.isalnum() or character in "-_" else "_"
-        for character in document_stem
-    ).strip("_") or "document"
-    document_hash = hashlib.sha256(request.document.encode("utf-8")).hexdigest()[:8]
-    job_id = f"{request.load_id}_{safe_document_stem}_{document_hash}"
-    job_dir = OUTPUT_DIR / job_id
+    job_id, job_dir = build_job_path(request.document, request.load_id)
     job_dir.mkdir(exist_ok=True)
 
     if request.action == "crop":
@@ -220,14 +344,33 @@ def recognize_job(job_id: str) -> dict[str, object]:
     job_dir = get_job_dir(job_id)
     try:
         output_path = run_ocr_job(job_dir)
-        result = json.loads(output_path.read_text(encoding="utf-8"))
     except (FileNotFoundError, ValueError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as error:
         raise HTTPException(status_code=500, detail=f"OCR failed: {error}") from error
 
-    return {
-        **result,
-        "output_dir": f"output/{job_id}",
-        "file": f"/output/{job_id}/ocr_results.json",
-    }
+    return build_ocr_result(job_id, output_path)
+
+
+@app.post("/api/jobs/{job_id}/ocr/tasks", status_code=202)
+def start_ocr_task(job_id: str, background_tasks: BackgroundTasks) -> dict[str, object]:
+    job_dir = get_job_dir(job_id)
+    task_id = uuid4().hex
+    task = update_ocr_task(
+        task_id,
+        task_id=task_id,
+        job_id=job_id,
+        status="queued",
+        stage="model_loading",
+        message="載入 OCR 模型中",
+        current=0,
+        total=0,
+    )
+    background_tasks.add_task(run_ocr_task, task_id, job_id, job_dir)
+    return task
+
+
+@app.get("/api/jobs/{job_id}/ocr/tasks/{task_id}")
+def get_ocr_task_status(job_id: str, task_id: str) -> dict[str, object]:
+    get_job_dir(job_id)
+    return read_ocr_task(job_id, task_id)

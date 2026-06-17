@@ -310,6 +310,16 @@ button:active:not(:disabled) {
   background: white;
 }
 
+.frame-icon {
+  width: 26px;
+  height: 26px;
+  border: 2px solid var(--blue);
+  background:
+    linear-gradient(90deg, transparent 31%, rgba(36, 90, 141, 0.78) 31% 36%, transparent 36% 64%, rgba(36, 90, 141, 0.78) 64% 69%, transparent 69%),
+    linear-gradient(transparent 31%, rgba(36, 90, 141, 0.78) 31% 36%, transparent 36% 64%, rgba(36, 90, 141, 0.78) 64% 69%, transparent 69%),
+    white;
+}
+
 .tool-svg {
   width: 27px;
   height: 27px;
@@ -525,9 +535,23 @@ kbd {
 .recognition-overlay {
   position: absolute;
   inset: 0;
+  z-index: 2;
   width: 100%;
   height: 100%;
   touch-action: none;
+}
+
+.frame-detection-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  opacity: 0.74;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+  user-select: none;
 }
 
 .crop-overlay.crop-mode {
@@ -662,14 +686,21 @@ kbd {
   text-align: center;
 }
 
-.loading-state span {
-  width: 38px;
-  height: 38px;
-  margin-bottom: 12px;
-  border: 4px solid var(--line);
-  border-top-color: var(--green);
-  border-radius: 50%;
-  animation: spin 700ms linear infinite;
+.initialized-loader {
+  width: 74px;
+  height: 74px;
+  margin-bottom: 14px;
+  overflow: visible;
+}
+
+.initialized-loader__arc {
+  fill: none;
+  stroke: #111714;
+  stroke-width: 15;
+  stroke-linecap: round;
+  stroke-dasharray: 8 92;
+  transform-origin: 100px 100px;
+  animation: initialized-loader-spin 1500ms ease-in-out infinite;
 }
 
 .loading-state strong {
@@ -715,6 +746,10 @@ kbd {
   background: white;
 }
 
+.layer-toggle button + button {
+  margin-top: 6px;
+}
+
 .recognition-toggle button span,
 .recognition-toggle button strong,
 .recognition-toggle button small {
@@ -752,8 +787,31 @@ kbd {
   background: rgba(255, 242, 0, 0.62);
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
+.frame-swatch {
+  background:
+    linear-gradient(90deg, transparent 40%, rgba(36, 90, 141, 0.8) 40% 48%, transparent 48%),
+    linear-gradient(transparent 40%, rgba(168, 58, 53, 0.8) 40% 48%, transparent 48%),
+    rgba(226, 238, 233, 0.9);
+}
+
+@keyframes initialized-loader-spin {
+  0% {
+    stroke-dasharray: 8 92;
+    stroke-dashoffset: 0;
+    transform: rotate(0deg);
+  }
+
+  50% {
+    stroke-dasharray: 78 22;
+    stroke-dashoffset: -18;
+    transform: rotate(230deg);
+  }
+
+  100% {
+    stroke-dasharray: 8 92;
+    stroke-dashoffset: -100;
+    transform: rotate(720deg);
+  }
 }
 
 .error-state {
