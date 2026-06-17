@@ -15,6 +15,8 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel, Field
 
+from src import frame_detection
+
 
 BASE_DIR = Path(__file__).resolve().parent
 PDF_DIR = BASE_DIR / "test-ED"
@@ -122,6 +124,7 @@ def create_job(request: JobRequest) -> dict[str, object]:
     if len(box_ids) != len(set(box_ids)):
         raise HTTPException(status_code=400, detail="Box IDs must be unique across pages")
 
+    pdf_path = get_pdf_path(request.document)
     document_stem = Path(request.document).stem
     safe_document_stem = "".join(
         character if character.isalnum() or character in "-_" else "_"
@@ -151,6 +154,16 @@ def create_job(request: JobRequest) -> dict[str, object]:
         snapshots[str(page_number)] = {"width": image.width, "height": image.height}
         result_files.append(f"/output/{job_id}/{snapshot_name}")
 
+    frame_grids, frame_result_path = frame_detection.write_job_frame_detection(
+        request.document,
+        pdf_path,
+        pages,
+        images,
+        job_dir,
+        PREVIEW_SCALE,
+    )
+    result_files.append(f"/output/{job_id}/{frame_result_path.relative_to(job_dir).as_posix()}")
+
     saved_boxes = []
     for box in request.boxes:
         page_number = box.page or request.page
@@ -160,16 +173,19 @@ def create_job(request: JobRequest) -> dict[str, object]:
         right = max(left + 1, min(round(box.x + box.width), image.width))
         bottom = max(top + 1, min(round(box.y + box.height), image.height))
 
-        saved_boxes.append(
-            {
-                "id": box.id,
-                "page": page_number,
-                "x": left,
-                "y": top,
-                "width": right - left,
-                "height": bottom - top,
-            }
+        saved_box = {
+            "id": box.id,
+            "page": page_number,
+            "x": left,
+            "y": top,
+            "width": right - left,
+            "height": bottom - top,
+        }
+        saved_box["frame_location"] = frame_detection.locate_box(
+            frame_grids.get(page_number),
+            saved_box,
         )
+        saved_boxes.append(saved_box)
 
         if request.action == "crop":
             crop_name = f"crop_{box.id:03d}.png"

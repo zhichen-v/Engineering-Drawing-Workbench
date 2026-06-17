@@ -1,10 +1,14 @@
 import json
+from pathlib import Path
 
 import fitz
 from fastapi.testclient import TestClient
 from PIL import Image
 
 import app as app_module
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def create_test_pdf(path, pages=1):
@@ -67,7 +71,18 @@ def test_preview_and_crop_job(tmp_path, monkeypatch):
 
     metadata = json.loads((job_dir / "boxes.json").read_text(encoding="utf-8"))
     assert metadata["document"] == "drawing.pdf"
-    assert metadata["boxes"] == [{"id": 1, "page": 1, "x": 10, "y": 12, "width": 30, "height": 24}]
+    assert metadata["boxes"] == [
+        {
+            "id": 1,
+            "page": 1,
+            "x": 10,
+            "y": 12,
+            "width": 30,
+            "height": 24,
+            "frame_location": None,
+        }
+    ]
+    assert (job_dir / "frame_detection" / "frame_detection_results.json").is_file()
 
 
 def test_repeated_crop_updates_same_output_by_box_id(tmp_path, monkeypatch):
@@ -130,7 +145,17 @@ def test_repeated_crop_updates_same_output_by_box_id(tmp_path, monkeypatch):
         assert crop.size == (50, 40)
 
     metadata = json.loads((job_dir / "boxes.json").read_text(encoding="utf-8"))
-    assert metadata["boxes"] == [{"id": 2, "page": 1, "x": 30, "y": 36, "width": 50, "height": 40}]
+    assert metadata["boxes"] == [
+        {
+            "id": 2,
+            "page": 1,
+            "x": 30,
+            "y": 36,
+            "width": 50,
+            "height": 40,
+            "frame_location": None,
+        }
+    ]
 
 
 def test_pages_share_one_output_and_global_crop_numbers(tmp_path, monkeypatch):
@@ -168,6 +193,36 @@ def test_pages_share_one_output_and_global_crop_numbers(tmp_path, monkeypatch):
     metadata = json.loads((job_dir / "boxes.json").read_text(encoding="utf-8"))
     assert metadata["pages"] == [1, 2]
     assert [box["page"] for box in metadata["boxes"]] == [1, 2]
+
+
+def test_crop_job_writes_frame_detection_and_frame_location(tmp_path, monkeypatch):
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+
+    monkeypatch.setattr(app_module, "PDF_DIR", ROOT / "test-ED")
+    monkeypatch.setattr(app_module, "OUTPUT_DIR", output_dir)
+
+    response = TestClient(app_module.app).post(
+        "/api/jobs",
+        json={
+            "document": "59105-0SBG000.pdf",
+            "page": 1,
+            "load_id": "20260616T034640664Z",
+            "action": "crop",
+            "boxes": [{"id": 1, "x": 1500, "y": 600, "width": 40, "height": 30}],
+        },
+    )
+
+    assert response.status_code == 200
+    job_dir = output_dir / response.json()["job_id"]
+    frame_result_path = job_dir / "frame_detection" / "frame_detection_results.json"
+    assert frame_result_path.is_file()
+
+    metadata = json.loads((job_dir / "boxes.json").read_text(encoding="utf-8"))
+    assert metadata["boxes"][0]["frame_location"] == "D3"
+
+    frame_result = json.loads(frame_result_path.read_text(encoding="utf-8"))
+    assert frame_result["pages"][0]["source"] == "pdf_text"
 
 
 def test_different_loads_create_separate_time_ordered_outputs(tmp_path, monkeypatch):
@@ -229,7 +284,14 @@ def test_recognize_job_returns_ocr_results(tmp_path, monkeypatch):
                     "results": [
                         {
                             "crop_number": 1,
-                            "box": {"id": 1, "x": 10, "y": 12, "width": 30, "height": 24},
+                            "box": {
+                                "id": 1,
+                                "x": 10,
+                                "y": 12,
+                                "width": 30,
+                                "height": 24,
+                                "frame_location": "D3",
+                            },
                             "ocr": "⌀ 0.5",
                         }
                     ],

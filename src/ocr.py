@@ -172,7 +172,10 @@ def run_ocr(args: argparse.Namespace) -> Path:
     for crop_number, path in crops:
         previous = previous_results.get(crop_number)
         if previous and previous.get("box") == boxes[crop_number]:
-            results_by_number[crop_number] = previous
+            results_by_number[crop_number] = {
+                **previous,
+                "frame_location": boxes[crop_number].get("frame_location"),
+            }
         else:
             pending.append((crop_number, path))
 
@@ -210,6 +213,7 @@ def run_ocr(args: argparse.Namespace) -> Path:
         results_by_number[crop_number] = {
             "crop_number": crop_number,
             "box": boxes[crop_number],
+            "frame_location": boxes[crop_number].get("frame_location"),
             "ocr": text,
         }
 

@@ -112,7 +112,15 @@ def test_has_diameter_symbol_stops_at_gap_before_text(monkeypatch):
 
 
 def test_run_ocr_reuses_unchanged_box_results_before_loading_models(tmp_path, monkeypatch):
-    box = {"id": 1, "page": 2, "x": 10, "y": 12, "width": 30, "height": 24}
+    box = {
+        "id": 1,
+        "page": 2,
+        "x": 10,
+        "y": 12,
+        "width": 30,
+        "height": 24,
+        "frame_location": "D3",
+    }
     (tmp_path / "boxes.json").write_text(
         json.dumps({"job_id": "test-job", "boxes": [box]}),
         encoding="utf-8",
@@ -147,7 +155,9 @@ def test_run_ocr_reuses_unchanged_box_results_before_loading_models(tmp_path, mo
     )
 
     result = json.loads(output_path.read_text(encoding="utf-8"))
-    assert result["results"] == [{"crop_number": 1, "box": box, "ocr": "0.01"}]
+    assert result["results"] == [
+        {"crop_number": 1, "box": box, "frame_location": "D3", "ocr": "0.01"}
+    ]
 
 
 def test_run_ocr_only_recognizes_changed_boxes(tmp_path, monkeypatch):
