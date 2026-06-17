@@ -350,6 +350,7 @@ function App() {
   const [jobResult, setJobResult] = useState(null);
   const [ocrResult, setOcrResult] = useState(null);
   const [recognizing, setRecognizing] = useState(false);
+  const [recognitionComplete, setRecognitionComplete] = useState(false);
   const [ocrStage, setOcrStage] = useState("model_loading");
   const [ocrProgress, setOcrProgress] = useState({ current: 0, total: 0, reused: 0, crop: "" });
   const [frameDetection, setFrameDetection] = useState(null);
@@ -389,6 +390,11 @@ function App() {
   const ocrProgressText = ocrProgress.total
     ? `${Math.min(ocrProgress.current, ocrProgress.total)} / ${ocrProgress.total}`
     : "";
+  const recognitionButtonText = recognizing
+    ? "辨識處理中"
+    : recognitionComplete
+      ? "完成辨識"
+      : "執行辨識";
   const canvasBusyTitle = detectingFrame
     ? "執行圖框識別中"
     : recognizing
@@ -453,6 +459,7 @@ function App() {
     loadIdRef.current = createLoadId();
     setJobResult(null);
     setOcrResult(null);
+    setRecognitionComplete(false);
     setOcrStage("model_loading");
     setOcrProgress({ current: 0, total: 0, reused: 0, crop: "" });
     setFrameDetection(null);
@@ -762,6 +769,7 @@ function App() {
     }
     setBusy(true);
     setRecognizing(true);
+    setRecognitionComplete(false);
     setOcrStage("model_loading");
     setOcrProgress({ current: 0, total: documentBoxes.length, reused: 0, crop: "" });
     setJobResult(null);
@@ -790,7 +798,7 @@ function App() {
       const result = await waitForOcrTask(cropResult.job_id, task.task_id);
 
       setOcrResult(result);
-      setJobResult({ ...cropResult, action: "ocr", revision: Date.now() });
+      setRecognitionComplete(true);
       setSelectedId(null);
       setInteraction(null);
       setViewMode("recognition");
@@ -806,6 +814,7 @@ function App() {
 
   function returnToEdit() {
     setViewMode("edit");
+    setRecognitionComplete(false);
     setSelectedId(null);
     setInteraction(null);
     setActiveTool("select");
@@ -1074,13 +1083,13 @@ function App() {
             disabled={busy || !frameGridReady || documentBoxes.length === 0 || viewMode === "recognition"}
             onClick={submitRecognition}
           >
-            <span>{recognizing ? "辨識處理中" : "執行辨識"}</span>
+            <span>{recognitionButtonText}</span>
             <span aria-hidden="true">→</span>
           </button>
           {jobResult && (
             <div className="job-result" key={jobResult.revision}>
               <span className="result-status">
-                {jobResult.action === "ocr" ? "辨識完成" : jobResult.action === "crop" ? "裁切完成" : "標註已儲存"}
+                {jobResult.action === "crop" ? "裁切完成" : "標註已儲存"}
               </span>
               <strong className="result-path">{jobResult.output_dir}</strong>
               <div className="crop-preview-list">
