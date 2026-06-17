@@ -17,7 +17,7 @@ SYMBOL_CLASSIFIER_DIR = Path(__file__).resolve().parent / "symbol-classifierdata
 CLASSIFIER_CHECKPOINT = SYMBOL_CLASSIFIER_DIR / "output" / "best.pt"
 BASE_MODEL = "zai-org/GLM-OCR"
 CROP_PATTERN = re.compile(r"crop_(\d+)\.png$")
-OCR_VERSION = 4
+OCR_VERSION = 5
 
 if str(SYMBOL_CLASSIFIER_DIR) not in sys.path:
     sys.path.insert(0, str(SYMBOL_CLASSIFIER_DIR))
@@ -227,7 +227,9 @@ def run_ocr(
             text = normalize_ocr_text(
                 recognize_image(image, processor, model, args.max_new_tokens)
             )
-            if not text.startswith("⌀") and has_diameter_symbol(
+            if text == "//":
+                text = "[GD_PARALLELISM]"
+            elif not text.startswith("⌀") and has_diameter_symbol(
                 image,
                 classifier,
                 args.diameter_threshold,

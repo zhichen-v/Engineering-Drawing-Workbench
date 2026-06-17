@@ -55,14 +55,14 @@ def normalize_symbol_crop(symbol: Image.Image, size: int = 128) -> Image.Image |
     return canvas
 
 
-def crop_feature_control_regions(
+def crop_feature_control_region_candidates(
     image: Image.Image,
-) -> tuple[Image.Image, Image.Image] | None:
+) -> list[tuple[Image.Image, Image.Image]]:
     grayscale = np.asarray(image.convert("L"))
     dark = grayscale < 190
     horizontal_lines = line_centers(dark.mean(axis=1) >= 0.5)
     if not horizontal_lines:
-        return None
+        return []
 
     top_line = bottom_line = None
     if len(horizontal_lines) >= 2:
@@ -85,44 +85,63 @@ def crop_feature_control_regions(
     inset = 2
     crop_top = top_line + inset if top_line is not None else 0
     crop_bottom = bottom_line - inset if bottom_line is not None else image.height
+    if crop_bottom <= crop_top:
+        return []
     minimum_cell_ink = max(3, round((crop_bottom - crop_top) * 0.2))
+    candidates = []
+    seen = set()
+
+    def add_region(crop_left: int, right: int) -> None:
+        crop_right = right - inset
+        key = (crop_left, crop_right, right)
+        if key in seen:
+            return
+        seen.add(key)
+        if crop_right - crop_left <= inset * 2 or crop_bottom - crop_top <= inset * 2:
+            return
+        cell = dark[crop_top:crop_bottom, crop_left:crop_right]
+        if int(cell.sum()) < minimum_cell_ink:
+            return
+        symbol = normalize_symbol_crop(
+            image.crop((crop_left, crop_top, crop_right, crop_bottom))
+        )
+        if symbol is None:
+            return
+
+        value_right = vertical_lines[-1] - inset
+        if value_right <= right + inset:
+            value_right = image.width
+        values = image.crop((right + inset, crop_top, value_right, crop_bottom))
+        candidates.append((symbol, values))
+
     if len(vertical_lines) < 2:
         if len(vertical_lines) != 1 or top_line is None or bottom_line is None:
-            return None
+            return []
         right = vertical_lines[0]
         if right <= edge_limit:
-            return None
+            return []
         leading_region = dark[crop_top:crop_bottom, : max(0, right - inset)]
         value_region = dark[crop_top:crop_bottom, min(image.width, right + inset) :]
         if int(leading_region.sum()) < minimum_cell_ink or int(value_region.sum()) < minimum_cell_ink:
-            return None
-        crop_left = 0
+            return []
+        add_region(0, right)
     else:
         first_vertical = vertical_lines[0]
         leading_region = dark[crop_top:crop_bottom, : max(0, first_vertical - inset)]
         leading_ink = int(leading_region.sum())
         has_leading_symbol = leading_ink >= minimum_cell_ink
-        if first_vertical <= edge_limit or not has_leading_symbol:
-            left, right = first_vertical, vertical_lines[1]
-            crop_left = left + inset
-        else:
-            left, right = 0, first_vertical
-            crop_left = left
+        if first_vertical > edge_limit and has_leading_symbol:
+            add_region(0, first_vertical)
+        add_region(first_vertical + inset, vertical_lines[1])
 
-    crop_right = right - inset
-    if crop_right - crop_left <= inset * 2 or crop_bottom - crop_top <= inset * 2:
-        return None
-    symbol = normalize_symbol_crop(
-        image.crop((crop_left, crop_top, crop_right, crop_bottom))
-    )
-    if symbol is None:
-        return None
+    return candidates
 
-    value_right = vertical_lines[-1] - inset
-    if value_right <= right + inset:
-        value_right = image.width
-    values = image.crop((right + inset, crop_top, value_right, crop_bottom))
-    return symbol, values
+
+def crop_feature_control_regions(
+    image: Image.Image,
+) -> tuple[Image.Image, Image.Image] | None:
+    candidates = crop_feature_control_region_candidates(image)
+    return candidates[0] if candidates else None
 
 
 def classify_symbol(
@@ -146,12 +165,16 @@ def classify_gd_tag(
     classifier: dict,
     threshold: float,
 ) -> tuple[str, Image.Image] | None:
-    regions = crop_feature_control_regions(image)
-    if regions is None:
-        return None
-    symbol, values = regions
+    best = None
+    for symbol, values in crop_feature_control_region_candidates(image):
+        label, confidence = classify_symbol(symbol, classifier, NON_GD_LABELS)
+        if best is None or confidence > best[1]:
+            best = (label, confidence, values)
 
-    label, confidence = classify_symbol(symbol, classifier, NON_GD_LABELS)
+    if best is None:
+        return None
+
+    label, confidence, values = best
     if confidence < threshold:
         return None
     return f"[GD_{label}]", values

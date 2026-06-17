@@ -386,7 +386,6 @@ function App() {
   const frameGridReady = framePageIsReady(currentFramePage);
   const frameOverlayUrl = frameDetection?.overlays?.[String(page)] || "";
   const selectedFrameLocation = locateFrameCell(currentFramePage, selectedBox);
-  const selectedCenter = boxCenter(selectedBox);
   const ocrProgressText = ocrProgress.total
     ? `${Math.min(ocrProgress.current, ocrProgress.total)} / ${ocrProgress.total}`
     : "";
@@ -1057,7 +1056,6 @@ function App() {
               <div><dt>BOX ID</dt><dd>#{String(selectedBox.id).padStart(2, "0")}</dd></div>
               <div><dt>圖框位置</dt><dd>{selectedFrameLocation || "未定位"}</dd></div>
               <div><dt>座標</dt><dd>X {Math.round(selectedBox.x)} / Y {Math.round(selectedBox.y)}</dd></div>
-              <div><dt>判定點</dt><dd>X {Math.round(selectedCenter.x)} / Y {Math.round(selectedCenter.y)}</dd></div>
               <div><dt>尺寸</dt><dd>{Math.round(selectedBox.width)} × {Math.round(selectedBox.height)} PX</dd></div>
             </dl>
           )}

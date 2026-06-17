@@ -85,6 +85,35 @@ def test_crop_feature_control_regions_rejects_text_without_horizontal_frame():
     assert crop_feature_control_regions(image) is None
 
 
+def test_classify_gd_tag_uses_best_candidate_when_left_frame_is_inset(monkeypatch):
+    image = Image.new("RGB", (191, 51), "white")
+    draw = ImageDraw.Draw(image)
+    draw.line((0, 1, 190, 1), fill="black")
+    draw.line((0, 44, 190, 44), fill="black")
+    for x in (15, 75, 152, 186):
+        draw.line((x, 1, x, 44), fill="black")
+    draw.line((3, 22, 12, 22), fill="black")
+    draw.line((36, 35, 56, 10), fill="black")
+    draw.line((48, 35, 68, 10), fill="black")
+    draw.text((86, 8), "0.01", fill="black")
+
+    monkeypatch.setattr(ocr_filters, "normalize_symbol_crop", lambda symbol: symbol)
+    monkeypatch.setattr(
+        ocr_filters,
+        "classify_symbol",
+        lambda symbol, *_: ("PARALLELISM", 0.99)
+        if symbol.width > 40
+        else ("CIRCULARITY", 0.02),
+    )
+
+    result = ocr_filters.classify_gd_tag(image, {}, 0.4)
+
+    assert result is not None
+    tag, values = result
+    assert tag == "[GD_PARALLELISM]"
+    assert values.width > 0
+
+
 def test_clean_gd_value_text_removes_visual_descriptions_and_numeric_frames():
     assert clean_gd_value_text("[圖形] 0.01") == "0.01"
     assert clean_gd_value_text("[0.01]") == "0.01"
@@ -211,6 +240,41 @@ def test_run_ocr_only_recognizes_changed_boxes(tmp_path, monkeypatch):
     result = json.loads(output_path.read_text(encoding="utf-8"))
     assert recognized == [(40, 30)]
     assert [item["ocr"] for item in result["results"]] == ["KEEP", "UPDATED"]
+
+
+def test_run_ocr_converts_exact_parallelism_slashes_to_gd_tag(tmp_path, monkeypatch):
+    box = {"id": 1, "page": 1, "x": 10, "y": 12, "width": 30, "height": 24}
+    (tmp_path / "boxes.json").write_text(
+        json.dumps({"job_id": "test-job", "boxes": [box]}),
+        encoding="utf-8",
+    )
+    Image.new("RGB", (30, 24), "white").save(tmp_path / "crop_001.png")
+
+    monkeypatch.setattr(ocr, "select_device", lambda *_: "cpu")
+    monkeypatch.setattr(ocr, "load_symbol_classifier", lambda *_: {})
+    monkeypatch.setattr(ocr, "load_base_model", lambda *_: (object(), object()))
+    monkeypatch.setattr(ocr, "classify_gd_tag", lambda *_: None)
+    monkeypatch.setattr(
+        ocr,
+        "has_diameter_symbol",
+        lambda *_: (_ for _ in ()).throw(AssertionError("diameter check should not run")),
+    )
+    monkeypatch.setattr(ocr, "recognize_image", lambda *_: "//")
+
+    output_path = ocr.run_ocr(
+        SimpleNamespace(
+            input_dir=tmp_path,
+            classifier_checkpoint=Path("unused.pt"),
+            classifier_threshold=0.4,
+            diameter_threshold=0.99,
+            device="auto",
+            max_new_tokens=128,
+            allow_model_download=False,
+        )
+    )
+
+    result = json.loads(output_path.read_text(encoding="utf-8"))
+    assert result["results"][0]["ocr"] == "[GD_PARALLELISM]"
 
 
 def test_run_ocr_reports_model_loading_before_recognition(tmp_path, monkeypatch):
