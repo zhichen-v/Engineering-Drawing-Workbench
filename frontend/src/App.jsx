@@ -115,10 +115,19 @@ function LoadingArc() {
   );
 }
 
-function ToolButton({ active, disabled = false, icon, title, description, shortcut, onClick }) {
+function ToolButton({
+  active,
+  attention = false,
+  disabled = false,
+  icon,
+  title,
+  description,
+  shortcut,
+  onClick,
+}) {
   return (
     <button
-      className={`tool-button ${active ? "active" : ""}`}
+      className={`tool-button ${active ? "active" : ""} ${attention ? "attention" : ""}`}
       disabled={disabled}
       onClick={onClick}
     >
@@ -883,6 +892,7 @@ function App() {
             <>
               <ToolButton
                 active={frameGridReady}
+                attention={!frameGridReady && !detectingFrame}
                 disabled={busy || loading || !documentName}
                 icon={<FrameIcon />}
                 title={detectingFrame ? "圖框識別中" : "圖框識別"}

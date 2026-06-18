@@ -121,6 +121,43 @@ def test_clean_gd_value_text_removes_visual_descriptions_and_numeric_frames():
     assert clean_gd_value_text("0.02 |A|B|C") == "0.02 A B C"
 
 
+def test_normalize_ocr_text_reconstructs_unilateral_tolerances():
+    cases = {
+        "0.05^{+0.1}_{0.0}": "0.05 +0.1 -0.0",
+        "0.05 +0.1 _{0.0}": "0.05 +0.1 -0.0",
+        "0.05^{+0.1} 0.0": "0.05 +0.1 -0.0",
+        "0.05^{+0.1}": "0.05 +0.1 -0",
+        "0.05_{-0.1}": "0.05 +0 -0.1",
+        "0.05 0 -0.1": "0.05 +0 -0.1",
+        "17.90 -0.04": "17.9 +0 -0.04",
+        "17.9 +0.040": "17.9 +0.04 -0",
+        "17.9 -0.040": "17.9 +0 -0.04",
+    }
+
+    for raw, expected in cases.items():
+        assert ocr_filters.normalize_ocr_text(raw) == expected
+
+
+def test_unilateral_tolerance_uses_standard_form_before_flattening():
+    standard = ocr_filters.normalize_unilateral_tolerance("0.05^{+0.1} 0.0")
+
+    assert standard == "0.05^{+0.1}_{0.0}"
+    assert ocr_filters.flatten_unilateral_tolerance(standard) == "0.05 +0.1 -0.0"
+
+
+def test_normalize_ocr_text_does_not_guess_without_zero_evidence():
+    assert ocr_filters.normalize_ocr_text("2.7+0.02") == "2.7+0.02"
+    assert ocr_filters.normalize_ocr_text("17.90") == "17.90"
+
+
+def test_normalize_ocr_text_converts_latex_symbol_variants():
+    assert ocr_filters.normalize_ocr_text(r"45^{\circ}") == "45°"
+    assert ocr_filters.normalize_ocr_text(r"45^{/circ}") == "45°"
+    assert ocr_filters.normalize_ocr_text(r"{\varnothing} 10") == "⌀ 10"
+    assert ocr_filters.normalize_ocr_text(r"{/varnothing} 10") == "⌀ 10"
+    assert ocr_filters.normalize_ocr_text(r"$\varnothing$ 10") == "⌀ 10"
+
+
 def test_has_diameter_symbol_stops_at_gap_before_text(monkeypatch):
     image = Image.new("RGB", (100, 40), "white")
     draw = ImageDraw.Draw(image)

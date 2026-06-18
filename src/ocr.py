@@ -17,7 +17,7 @@ SYMBOL_CLASSIFIER_DIR = Path(__file__).resolve().parent / "symbol-classifierdata
 CLASSIFIER_CHECKPOINT = SYMBOL_CLASSIFIER_DIR / "output" / "best.pt"
 BASE_MODEL = "zai-org/GLM-OCR"
 CROP_PATTERN = re.compile(r"crop_(\d+)\.png$")
-OCR_VERSION = 5
+OCR_VERSION = 7
 
 if str(SYMBOL_CLASSIFIER_DIR) not in sys.path:
     sys.path.insert(0, str(SYMBOL_CLASSIFIER_DIR))

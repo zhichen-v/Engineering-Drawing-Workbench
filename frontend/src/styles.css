@@ -269,9 +269,25 @@ button:active:not(:disabled) {
   grid-template-columns: 30px 1fr auto;
   gap: 11px;
   align-items: center;
+  position: relative;
   width: 100%;
   padding: 12px;
   text-align: left;
+}
+
+.tool-button.attention:not(:disabled)::before,
+.tool-button.attention:not(:disabled)::after {
+  position: absolute;
+  inset: -2px;
+  border: 2px solid var(--green-dark);
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  animation: frame-detection-pulse 3.2s cubic-bezier(0, 0, 1, 1) infinite;
+}
+
+.tool-button.attention:not(:disabled)::after {
+  animation-delay: 180ms;
 }
 
 .tool-button.active {
@@ -603,7 +619,7 @@ kbd {
   stroke-width: 9px;
   paint-order: stroke fill;
   font-size: 38px;
-  font-weight: 500;
+  font-weight: 700;
   dominant-baseline: central;
   text-rendering: geometricPrecision;
 }
@@ -811,6 +827,30 @@ kbd {
     stroke-dasharray: 8 92;
     stroke-dashoffset: -100;
     transform: rotate(720deg);
+  }
+}
+
+@keyframes frame-detection-pulse {
+  0%,
+  54% {
+    opacity: 0;
+    transform: scale(1);
+  }
+
+  58% {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+
+  70% {
+    opacity: 0.42;
+    transform: scale(1.045, 1.16);
+  }
+
+  80%,
+  100% {
+    opacity: 0;
+    transform: scale(1.075, 1.28);
   }
 }
 
