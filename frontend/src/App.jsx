@@ -357,6 +357,8 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [jobResult, setJobResult] = useState(null);
+  const [savedJobId, setSavedJobId] = useState("");
+  const [savedBoxesSignature, setSavedBoxesSignature] = useState("");
   const [ocrResult, setOcrResult] = useState(null);
   const [recognizing, setRecognizing] = useState(false);
   const [recognitionComplete, setRecognitionComplete] = useState(false);
@@ -389,6 +391,8 @@ function App() {
     .flatMap(([pageNumber, pageBoxes]) => pageBoxes.map((box) => ({ ...box, page: Number(pageNumber) })))
     .concat(boxes.map((box) => ({ ...box, page })))
     .sort((left, right) => left.id - right.id);
+  const boxesSignature = JSON.stringify(documentBoxes);
+  const hasUnsavedBoxes = documentBoxes.length > 0 && boxesSignature !== savedBoxesSignature;
   const currentOcrResults = (ocrResult?.results || []).filter(
     (result) => (result.box.page || 1) === page,
   );
@@ -467,6 +471,8 @@ function App() {
   function beginDocumentLoad() {
     loadIdRef.current = createLoadId();
     setJobResult(null);
+    setSavedJobId("");
+    setSavedBoxesSignature("");
     setOcrResult(null);
     setRecognitionComplete(false);
     setOcrStage("model_loading");
@@ -739,6 +745,10 @@ function App() {
       const result = await response.json();
       if (!response.ok) throw new Error(result.detail || "輸出失敗");
       setJobResult({ ...result, action, revision: Date.now() });
+      if (action === "crop") {
+        setSavedJobId(result.job_id);
+        setSavedBoxesSignature(boxesSignature);
+      }
       showToast(action === "crop" ? "裁切結果已輸出" : "標註資料已儲存");
     } catch (error) {
       showToast(error.message);
@@ -776,6 +786,10 @@ function App() {
       showToast("請先執行圖框識別");
       return;
     }
+    if (hasUnsavedBoxes || !savedJobId) {
+      showToast("裁切框有變動，請先儲存標註資料");
+      return;
+    }
     setBusy(true);
     setRecognizing(true);
     setRecognitionComplete(false);
@@ -783,28 +797,14 @@ function App() {
     setOcrProgress({ current: 0, total: documentBoxes.length, reused: 0, crop: "" });
     setJobResult(null);
     try {
-      const cropResponse = await fetch("/api/jobs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          document: documentName,
-          page,
-          load_id: loadIdRef.current,
-          boxes: documentBoxes,
-          action: "crop",
-        }),
-      });
-      const cropResult = await cropResponse.json();
-      if (!cropResponse.ok) throw new Error(cropResult.detail || "裁切資料更新失敗");
-
-      const response = await fetch(`/api/jobs/${encodeURIComponent(cropResult.job_id)}/ocr/tasks`, {
+      const response = await fetch(`/api/jobs/${encodeURIComponent(savedJobId)}/ocr/tasks`, {
         method: "POST",
       });
       const task = await response.json();
       if (!response.ok) throw new Error(task.detail || "辨識任務啟動失敗");
       applyOcrTaskStatus(task);
 
-      const result = await waitForOcrTask(cropResult.job_id, task.task_id);
+      const result = await waitForOcrTask(savedJobId, task.task_id);
 
       setOcrResult(result);
       setRecognitionComplete(true);
@@ -1083,14 +1083,22 @@ function App() {
         <section className="output-section">
           <SectionHeading step="04" eyebrow="OUTPUT" title="輸出作業" />
           <button
-            className="ghost-button full-width action-button"
+            className={`ghost-button full-width action-button ${hasUnsavedBoxes ? "attention" : ""}`}
             disabled={busy || !frameGridReady || documentBoxes.length === 0 || viewMode === "recognition"}
             onClick={() => submitJob("crop")}
           >儲存標註資料</button>
           <button
             className="primary-button"
             type="button"
-            disabled={busy || !frameGridReady || documentBoxes.length === 0 || viewMode === "recognition"}
+            disabled={
+              busy
+              || !frameGridReady
+              || documentBoxes.length === 0
+              || hasUnsavedBoxes
+              || !savedJobId
+              || viewMode === "recognition"
+            }
+            title={hasUnsavedBoxes ? "裁切框有變動，請先儲存標註資料" : ""}
             onClick={submitRecognition}
           >
             <span>{recognitionButtonText}</span>

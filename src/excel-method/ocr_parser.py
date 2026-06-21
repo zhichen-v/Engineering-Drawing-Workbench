@@ -7,7 +7,7 @@ from pathlib import Path
 NUMBER_PATTERN = r"(?:\d+(?:\.\d+)?|\.\d+)"
 GD_TAG_PATTERN = re.compile(r"\[GD[_-][^\]]+\]", re.IGNORECASE)
 SURFACE_PATTERN = re.compile(
-    r"(?:\bRA\b|\bRMS\b|SURFACE\s+(?:FINISH|ROUGHNESS)|[µμ]m)",
+    r"(?:\bRA\b|\bRZ\b|\bRMS\b|SURFACE\s+(?:FINISH|ROUGHNESS)|[µμ]m)",
     re.IGNORECASE,
 )
 MULTIPLICITY_PATTERN = re.compile(r"^\s*\d+\s*[Xx]\s*")
@@ -32,6 +32,18 @@ def build_mip_rows(ocr_data, job_dir, tolerance_profile, unit):
         for result in ocr_data.get("results", [])
     ]
     return normalized_rows, [row["output_row"] for row in normalized_rows]
+
+
+def build_qc_rows(ocr_data, job_dir, tolerance_profile, unit):
+    normalized_rows = [
+        parse_ocr_result(result, job_dir, tolerance_profile, unit)
+        for result in ocr_data.get("results", [])
+    ]
+    output_rows = [
+        build_qc_output_row(row)
+        for row in normalized_rows
+    ]
+    return normalized_rows, output_rows
 
 
 def parse_ocr_result(result, job_dir, tolerance_profile, unit):
@@ -121,6 +133,132 @@ def parse_ocr_result(result, job_dir, tolerance_profile, unit):
         "warnings": warnings,
         "output_row": output_row,
     }
+
+
+def build_qc_output_row(normalized_row):
+    source = normalized_row["source"]
+    parsed = normalized_row["parsed"]
+    output = normalized_row["output_row"]
+    raw_text = parsed["normalized_ocr"]
+    page = output["drawing_sheet"]
+    crop_number = int(source["crop_number"])
+    feature, feature_lookup, specification = qc_feature_and_specification(
+        raw_text,
+        parsed["kind"],
+        parsed["specification"],
+    )
+    tolerance_plus, tolerance_minus = split_qc_tolerance(
+        parsed["tolerance"]
+    )
+    return {
+        "item": f"{page}-{crop_number}",
+        "zone": output["zone"],
+        "feature": feature,
+        "feature_lookup": feature_lookup,
+        "specification": specification,
+        "tolerance_plus": tolerance_plus,
+        "tolerance_minus": tolerance_minus,
+        "measuring_equipment": output["measuring_equipment"],
+    }
+
+
+def qc_feature_and_specification(raw_text, kind, specification):
+    if kind == "gdt":
+        tag = GD_TAG_PATTERN.search(raw_text)
+        feature = normalize_gd_feature(tag.group(0)) if tag else ""
+        value = first_dimension_number(
+            GD_TAG_PATTERN.sub("", raw_text).lstrip(" >")
+        )
+        return "", feature, value
+
+    if kind == "surface_roughness":
+        feature_match = re.search(r"\b(RA|RZ|RMS)\b", raw_text, re.IGNORECASE)
+        feature = feature_match.group(1).title() if feature_match else ""
+        return feature, "", surface_value(raw_text)
+
+    if re.search(r"[⌀Ø∅Φφ]|\bDIA(?:METER)?\b", specification, re.IGNORECASE):
+        cleaned = re.sub(
+            r"[⌀Ø∅Φφ]|\bDIA(?:METER)?\b",
+            "",
+            specification,
+            flags=re.IGNORECASE,
+        )
+        return "", "DIAMETER", clean_specification(cleaned)
+
+    if re.search(r"\bDEPTH\b|[↧↓]", specification, re.IGNORECASE):
+        cleaned = re.sub(
+            r"\bDEPTH\b|[↧↓]",
+            "",
+            specification,
+            flags=re.IGNORECASE,
+        )
+        return "", "DEPTH", clean_specification(cleaned)
+
+    if re.search(rf"(?<![A-Z])R\s*(?={NUMBER_PATTERN})", specification, re.IGNORECASE):
+        cleaned = re.sub(
+            rf"(?<![A-Z])R\s*(?={NUMBER_PATTERN})",
+            "",
+            specification,
+            flags=re.IGNORECASE,
+        )
+        return "R", "", clean_specification(cleaned)
+
+    if re.search(rf"(?<![A-Z])C\s*(?={NUMBER_PATTERN})", specification, re.IGNORECASE):
+        cleaned = re.sub(
+            rf"(?<![A-Z])C\s*(?={NUMBER_PATTERN})",
+            "",
+            specification,
+            flags=re.IGNORECASE,
+        )
+        return "C", "", clean_specification(cleaned)
+
+    if re.search(r"\^\{\\circ\}|°|\bDEG(?:REE)?S?\b", specification, re.IGNORECASE):
+        cleaned = re.sub(
+            r"\^\{\\circ\}|°|\bDEG(?:REE)?S?\b",
+            "",
+            specification,
+            flags=re.IGNORECASE,
+        )
+        return "", "LENGTH", clean_specification(cleaned)
+
+    return "", "", specification
+
+
+def normalize_gd_feature(tag):
+    value = tag.strip("[]")
+    value = re.sub(r"^GD[_-]", "", value, flags=re.IGNORECASE)
+    value = " ".join(value.replace("_", " ").replace("-", " ").upper().split())
+    aliases = {
+        "CIRCULARITY": "CIRCULARITY (ROUNDNESS)",
+        "ROUNDNESS": "CIRCULARITY (ROUNDNESS)",
+        "SURFACE PROFILE": "PROFILE OF A SURFACE",
+        "LINE PROFILE": "PROFILE OF A LINE",
+    }
+    return aliases.get(value, value)
+
+
+def split_qc_tolerance(tolerance):
+    value = str(tolerance or "").strip()
+    if not value or value == "-":
+        return "", ""
+
+    if value.startswith("≤"):
+        limit = first_dimension_number(value)
+        return "+0", f"-{limit}" if limit else ""
+
+    bilateral = re.fullmatch(rf"±\s*(?P<value>{NUMBER_PATTERN})", value)
+    if bilateral:
+        number = bilateral.group("value")
+        return f"+{number}", f"-{number}"
+
+    paired = re.fullmatch(
+        rf"\+(?P<plus>{NUMBER_PATTERN})/-\s*(?P<minus>{NUMBER_PATTERN})",
+        value,
+    )
+    if paired:
+        return f"+{paired.group('plus')}", f"-{paired.group('minus')}"
+
+    return "", ""
 
 
 def normalize_text(text):

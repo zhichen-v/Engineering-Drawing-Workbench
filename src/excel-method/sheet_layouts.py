@@ -101,3 +101,27 @@ FILL_LAYOUTS = (
     IPQC_LAYOUT,
     OGQC_LAYOUT,
 )
+
+
+QC_LAYOUT = TableLayout(
+    sheet_name="OGQC",
+    data_start_row=8,
+    template_data_rows=20,
+    footer_start_row=28,
+    last_column=17,
+    columns=(
+        ("item", 1),
+        ("zone", 2),
+        ("feature", 3),
+        ("specification", 4),
+        ("tolerance_plus", 5),
+        ("tolerance_minus", 6),
+        ("measuring_equipment", 7),
+    ),
+    font_name="Arial",
+    font_columns=(1, 2, 3, 4, 5, 6, 7),
+    text_columns=(1, 2, 3, 4, 5, 6, 7),
+    symbol_key="feature_lookup",
+    symbol_column=3,
+    symbol_lookup_sheet="選項",
+)

@@ -276,7 +276,9 @@ button:active:not(:disabled) {
 }
 
 .tool-button.attention:not(:disabled)::before,
-.tool-button.attention:not(:disabled)::after {
+.tool-button.attention:not(:disabled)::after,
+.action-button.attention:not(:disabled)::before,
+.action-button.attention:not(:disabled)::after {
   position: absolute;
   inset: -2px;
   border: 2px solid var(--green-dark);
@@ -286,7 +288,8 @@ button:active:not(:disabled) {
   animation: frame-detection-pulse 3.2s cubic-bezier(0, 0, 1, 1) infinite;
 }
 
-.tool-button.attention:not(:disabled)::after {
+.tool-button.attention:not(:disabled)::after,
+.action-button.attention:not(:disabled)::after {
   animation-delay: 180ms;
 }
 
@@ -949,6 +952,7 @@ kbd {
 }
 
 .action-button {
+  position: relative;
   margin-top: 0;
 }
 
