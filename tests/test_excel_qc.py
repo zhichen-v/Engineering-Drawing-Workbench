@@ -66,3 +66,23 @@ def test_qc_unspecified_tolerance_uses_mip_profile():
 
     assert row["tolerance_plus"] == "+0.05"
     assert row["tolerance_minus"] == "-0.05"
+
+
+def test_angle_uses_profile_for_mip_and_qc():
+    data = {
+        "results": [
+            {
+                "crop_number": 1,
+                "box": {"page": 1, "frame_location": "A1"},
+                "ocr": "45°",
+            }
+        ]
+    }
+
+    _, mip_rows = OCR_PARSER.build_mip_rows(data, ROOT, PROFILE, "metric")
+    _, qc_rows = OCR_PARSER.build_qc_rows(data, ROOT, PROFILE, "metric")
+
+    assert mip_rows[0]["excel_tolerance"] == "±0.5°"
+    assert mip_rows[0]["control_tolerance"] == "±0.4°"
+    assert qc_rows[0]["tolerance_plus"] == "+0.5°"
+    assert qc_rows[0]["tolerance_minus"] == "-0.5°"

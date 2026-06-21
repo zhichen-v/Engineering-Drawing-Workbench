@@ -8,14 +8,22 @@ from PIL import Image
 import app as app_module
 
 
-ROOT = Path(__file__).resolve().parents[1]
-
-
-def create_test_pdf(path, pages=1):
+def create_test_pdf(path, pages=1, frame_grid=False):
     pdf = fitz.open()
     for page_number in range(1, pages + 1):
-        page = pdf.new_page(width=100, height=80)
+        page = pdf.new_page(
+            width=400 if frame_grid else 100,
+            height=300 if frame_grid else 80,
+        )
         page.insert_text((10, 20), f"TEST DRAWING {page_number}")
+        if frame_grid:
+            for label, x in zip(("1", "2", "3", "4"), (50, 150, 250, 350)):
+                page.insert_text((x, 10), label)
+                page.insert_text((x, 296), label)
+            for label, y in zip(("A", "B", "C", "D"), (50, 115, 185, 250)):
+                page.insert_text((4, y), label)
+                page.insert_text((390, y), label)
+            page.draw_rect(fitz.Rect(15, 15, 385, 285))
     pdf.save(path)
     pdf.close()
 
@@ -196,20 +204,23 @@ def test_pages_share_one_output_and_global_crop_numbers(tmp_path, monkeypatch):
 
 
 def test_crop_job_writes_frame_detection_and_frame_location(tmp_path, monkeypatch):
+    pdf_dir = tmp_path / "test-ED"
     output_dir = tmp_path / "output"
+    pdf_dir.mkdir()
     output_dir.mkdir()
+    create_test_pdf(pdf_dir / "drawing.pdf", frame_grid=True)
 
-    monkeypatch.setattr(app_module, "PDF_DIR", ROOT / "test-ED")
+    monkeypatch.setattr(app_module, "PDF_DIR", pdf_dir)
     monkeypatch.setattr(app_module, "OUTPUT_DIR", output_dir)
 
     response = TestClient(app_module.app).post(
         "/api/jobs",
         json={
-            "document": "59105-0SBG000.pdf",
+            "document": "drawing.pdf",
             "page": 1,
             "load_id": "20260616T034640664Z",
             "action": "crop",
-            "boxes": [{"id": 1, "x": 1500, "y": 600, "width": 40, "height": 30}],
+            "boxes": [{"id": 1, "x": 480, "y": 480, "width": 40, "height": 30}],
         },
     )
 

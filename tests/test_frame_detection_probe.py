@@ -5,21 +5,36 @@ import fitz
 from src import frame_detection
 
 
-ROOT = Path(__file__).resolve().parents[1]
+def create_test_pdf(path, frame_grid):
+    pdf = fitz.open()
+    page = pdf.new_page(width=400, height=300)
+    if frame_grid:
+        for label, x in zip(("1", "2", "3", "4"), (50, 150, 250, 350)):
+            page.insert_text((x, 10), label)
+            page.insert_text((x, 296), label)
+        for label, y in zip(("A", "B", "C", "D"), (50, 115, 185, 250)):
+            page.insert_text((4, y), label)
+            page.insert_text((390, y), label)
+    page.draw_rect(fitz.Rect(15, 15, 385, 285))
+    pdf.save(path)
+    pdf.close()
 
 
-def test_pdf_text_grid_detection_maps_points_to_frame_locations():
-    with fitz.open(ROOT / "test-ED" / "59102-0SBG000.pdf") as pdf:
+def test_pdf_text_grid_detection_maps_points_to_frame_locations(tmp_path):
+    pdf_path = tmp_path / "grid.pdf"
+    create_test_pdf(pdf_path, frame_grid=True)
+
+    with fitz.open(pdf_path) as pdf:
         grid = frame_detection.detect_page_grid(
-            "59102-0SBG000.pdf",
+            pdf_path.name,
             1,
             pdf[0],
             scale=frame_detection.DEFAULT_SCALE,
         )
 
     assert grid.source == "pdf_text"
-    assert [column.label for column in grid.columns] == ["8", "7", "6", "5", "4", "3", "2", "1"]
-    assert [row.label for row in grid.rows] == ["F", "E", "D", "C", "B", "A"]
+    assert [column.label for column in grid.columns] == ["1", "2", "3", "4"]
+    assert [row.label for row in grid.rows] == ["A", "B", "C", "D"]
 
     column = next(cell for cell in grid.columns if cell.label == "3")
     row = next(cell for cell in grid.rows if cell.label == "D")
@@ -52,10 +67,13 @@ def test_box_location_uses_center_point():
     assert frame_detection.locate_box(grid, box) == "B2"
 
 
-def test_image_frame_fallback_keeps_probe_useful_without_pdf_text_labels():
-    with fitz.open(ROOT / "test-ED" / "sample_14.pdf") as pdf:
+def test_image_frame_fallback_keeps_probe_useful_without_pdf_text_labels(tmp_path):
+    pdf_path = tmp_path / "frame.pdf"
+    create_test_pdf(pdf_path, frame_grid=False)
+
+    with fitz.open(pdf_path) as pdf:
         grid = frame_detection.detect_page_grid(
-            "sample_14.pdf",
+            pdf_path.name,
             1,
             pdf[0],
             scale=frame_detection.DEFAULT_SCALE,

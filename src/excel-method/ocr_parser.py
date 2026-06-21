@@ -86,6 +86,7 @@ def parse_ocr_result(result, job_dir, tolerance_profile, unit):
             tolerance_source = "explicit_ocr"
         else:
             tolerance = tolerance_from_profile(
+                specification,
                 nominal_token,
                 tolerance_profile=tolerance_profile,
                 unit=unit,
@@ -247,17 +248,25 @@ def split_qc_tolerance(tolerance):
         limit = first_dimension_number(value)
         return "+0", f"-{limit}" if limit else ""
 
-    bilateral = re.fullmatch(rf"±\s*(?P<value>{NUMBER_PATTERN})", value)
+    bilateral = re.fullmatch(
+        rf"±\s*(?P<value>{NUMBER_PATTERN})(?P<unit>°?)",
+        value,
+    )
     if bilateral:
         number = bilateral.group("value")
-        return f"+{number}", f"-{number}"
+        unit = bilateral.group("unit")
+        return f"+{number}{unit}", f"-{number}{unit}"
 
     paired = re.fullmatch(
-        rf"\+(?P<plus>{NUMBER_PATTERN})/-\s*(?P<minus>{NUMBER_PATTERN})",
+        rf"\+(?P<plus>{NUMBER_PATTERN})(?P<plus_unit>°?)/-"
+        rf"\s*(?P<minus>{NUMBER_PATTERN})(?P<minus_unit>°?)",
         value,
     )
     if paired:
-        return f"+{paired.group('plus')}", f"-{paired.group('minus')}"
+        return (
+            f"+{paired.group('plus')}{paired.group('plus_unit')}",
+            f"-{paired.group('minus')}{paired.group('minus_unit')}",
+        )
 
     return "", ""
 
@@ -354,16 +363,21 @@ def surface_value(text):
     return values[-1] if values else ""
 
 
-def tolerance_from_profile(nominal_token, tolerance_profile, unit):
+def tolerance_from_profile(specification, nominal_token, tolerance_profile, unit):
     if not nominal_token:
         return "-"
 
-    unit_profile = (tolerance_profile.get("unit_tables") or {}).get(unit) or {}
-    table = (unit_profile.get("tables") or {}).get("linear_decimal") or {}
-    decimal_places = (
-        len(nominal_token.split(".", 1)[1]) if "." in nominal_token else 0
-    )
-    row = table.get(str(decimal_places))
+    if re.search(r"\^\{\\circ\}|°|\bDEG(?:REE)?S?\b", specification, re.IGNORECASE):
+        row = tolerance_profile.get("angular") or {}
+        suffix = "°"
+    else:
+        unit_profile = (tolerance_profile.get("unit_tables") or {}).get(unit) or {}
+        table = (unit_profile.get("tables") or {}).get("linear_decimal") or {}
+        decimal_places = (
+            len(nominal_token.split(".", 1)[1]) if "." in nominal_token else 0
+        )
+        row = table.get(str(decimal_places))
+        suffix = ""
     if not row:
         return "-"
 
@@ -372,8 +386,8 @@ def tolerance_from_profile(nominal_token, tolerance_profile, unit):
     if not plus or not minus:
         return "-"
     if plus == minus:
-        return f"±{plus}"
-    return f"+{plus}/-{minus}"
+        return f"±{plus}{suffix}"
+    return f"+{plus}{suffix}/-{minus}{suffix}"
 
 
 def scale_tolerance(tolerance, factor):

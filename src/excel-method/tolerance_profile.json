@@ -1,6 +1,10 @@
 {
-  "source": "Project default unspecified linear tolerance profile",
+  "source": "Project default unspecified tolerance profile",
   "confidence": "medium",
+  "angular": {
+    "plus": "0.5",
+    "minus": "0.5"
+  },
   "unit_tables": {
     "metric": {
       "source": "Metric title-block note: unless otherwise specified tolerances by decimal places",
