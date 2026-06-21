@@ -13,6 +13,7 @@ This repository is an engineering drawing crop and OCR workbench. The web UI pro
 - `output/`: generated job folders; do not commit.
 - `src/ocr.py`: GLM-OCR and GD symbol-classifier runtime plus CLI test runner.
 - `src/symbol-classifierdata/`: runtime GD classifier helper and checkpoint.
+- `src/excel-method/`: MIP/QC workbook parsing, template filling, and snapshot scripts.
 - `tests/`: API and crop behavior tests.
 
 ## Coordinate Contract
@@ -35,6 +36,10 @@ All pages from one loaded PDF share one output job. Box IDs are unique and seque
 - Never commit files generated under `output/`.
 - Keep OCR output as one `ocr_results.json` file inside the selected job folder.
 - Reuse an existing OCR result when its crop number and complete saved box metadata are unchanged.
+- Require saved crop and box data before OCR; unsaved box changes must not be recognized.
+- Do not infer a GD type from value/datum text alone when the image classifier returns `UNKNOWN`; improve and validate the classifier with representative data instead.
+- Use `src/excel-method/fill_MIP_all.py` for MIP output and `src/excel-method/fill_QC.py` for QC output.
+- Keep MIP output under `<job>/excel-output/MIP` and QC output under `<job>/excel-output/QC`.
 - Keep the CLI OCR test path available through `--test <output-folder>`.
 - Do not manually edit generated files under `static/`; edit React source under `frontend/src/`.
 
@@ -53,4 +58,11 @@ cd ..
 
 ```powershell
 .\.venv\Scripts\python.exe .\src\ocr.py --test <output-folder>
+```
+
+## Run Excel Output
+
+```powershell
+.\.venv\Scripts\python.exe .\src\excel-method\fill_MIP_all.py --job <output-folder>
+.\.venv\Scripts\python.exe .\src\excel-method\fill_QC.py --job <output-folder>
 ```

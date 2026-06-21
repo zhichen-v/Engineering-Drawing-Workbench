@@ -392,31 +392,39 @@ def write_job_frame_detection(
     scale: float = DEFAULT_SCALE,
 ) -> tuple[dict[int, PageGrid], Path]:
     frame_dir = job_dir / FRAME_DETECTION_DIR
-    if frame_dir.exists():
-        shutil.rmtree(frame_dir)
     frame_dir.mkdir(parents=True, exist_ok=True)
+    output_path = frame_dir / "frame_detection_results.json"
+    saved_pages = {}
+    if output_path.is_file():
+        saved_pages = {
+            int(page["page"]): page
+            for page in json.loads(output_path.read_text(encoding="utf-8")).get("pages", [])
+        }
 
     grids = {}
     with fitz.open(pdf_path) as pdf:
         for page_number in pages:
+            page_dir = frame_dir / f"page_{page_number:03d}"
+            if page_dir.exists():
+                shutil.rmtree(page_dir)
             grid = detect_page_grid(
                 document,
                 page_number,
                 pdf[page_number - 1],
                 images.get(page_number),
                 scale,
-                artifact_dir=frame_dir / f"page_{page_number:03d}",
+                artifact_dir=page_dir,
                 relative_root=job_dir,
             )
             grids[page_number] = grid
+            saved_pages[page_number] = asdict(grid)
 
-    output_path = frame_dir / "frame_detection_results.json"
     output_path.write_text(
         json.dumps(
             {
                 "document": document,
                 "scale": scale,
-                "pages": [asdict(grids[page_number]) for page_number in pages],
+                "pages": [saved_pages[page_number] for page_number in sorted(saved_pages)],
             },
             ensure_ascii=False,
             indent=2,

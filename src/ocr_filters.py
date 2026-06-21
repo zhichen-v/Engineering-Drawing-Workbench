@@ -63,8 +63,6 @@ def crop_feature_control_region_candidates(
     grayscale = np.asarray(image.convert("L"))
     dark = grayscale < 190
     horizontal_lines = line_centers(dark.mean(axis=1) >= 0.5)
-    if not horizontal_lines:
-        return []
 
     top_line = bottom_line = None
     if len(horizontal_lines) >= 2:
@@ -74,15 +72,21 @@ def crop_feature_control_region_candidates(
         bottom_touch = frame[-min(3, frame.shape[0]) :].any(axis=0)
         vertical_lines = line_centers((frame.mean(axis=0) >= 0.9) & top_touch & bottom_touch)
         edge_limit = max(6, round((bottom_line - top_line) * 0.3))
-    else:
-        vertical_lines = line_centers(dark.mean(axis=0) >= 0.7)
+    elif horizontal_lines:
         edge_limit = max(6, round(image.height * 0.3))
-        if horizontal_lines:
-            line = horizontal_lines[0]
-            if line <= edge_limit:
-                top_line = line
-            elif line >= image.height - 1 - edge_limit:
-                bottom_line = line
+        line = horizontal_lines[0]
+        if line <= edge_limit:
+            top_line = line
+            frame = dark[top_line:]
+        elif line >= image.height - 1 - edge_limit:
+            bottom_line = line
+            frame = dark[: bottom_line + 1]
+        else:
+            return []
+        vertical_lines = line_centers(frame.mean(axis=0) >= 0.95)
+    else:
+        vertical_lines = line_centers(dark.mean(axis=0) >= 0.95)
+        edge_limit = max(6, round(image.height * 0.3))
 
     inset = 2
     crop_top = top_line + inset if top_line is not None else 0

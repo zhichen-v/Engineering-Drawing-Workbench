@@ -17,6 +17,7 @@ PROFILE_PROJECTOR_PATTERN = re.compile(
     rf"|(?<![A-Z])C\s*{NUMBER_PATTERN}"
     rf"|[⌀Ø∅Φφ]"
     rf"|\bDIA(?:METER)?\b"
+    rf"|°"
     rf")",
     re.IGNORECASE,
 )
@@ -441,7 +442,7 @@ def equipment_rule(raw_text, kind):
     equipment = resolve_equipment(raw_text, kind)
     rules = {
         "CMM": "GD&T control.",
-        "Profile Projector": "Radius, chamfer, or diameter dimension.",
+        "Profile Projector": "Radius, chamfer, diameter, or angle dimension.",
         "Surface Roughness Tester": "Surface roughness requirement.",
         "Thread Plug Gauge": "Thread or tapped-hole callout.",
         "Visual": "Appearance or workmanship requirement.",

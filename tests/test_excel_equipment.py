@@ -24,6 +24,7 @@ SPEC.loader.exec_module(OCR_PARSER)
         "Ø10.0",
         "DIA 8.5",
         "DIAMETER 12",
+        "45°",
     ),
 )
 def test_profile_projector_dimensions(text):

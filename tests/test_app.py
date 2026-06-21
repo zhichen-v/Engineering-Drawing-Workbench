@@ -226,16 +226,20 @@ def test_crop_job_writes_frame_detection_and_frame_location(tmp_path, monkeypatc
 
 
 def test_frame_detection_endpoint_writes_overlay_for_frontend(tmp_path, monkeypatch):
+    pdf_dir = tmp_path / "test-ED"
     output_dir = tmp_path / "output"
+    pdf_dir.mkdir()
     output_dir.mkdir()
+    create_test_pdf(pdf_dir / "drawing.pdf", pages=3)
 
-    monkeypatch.setattr(app_module, "PDF_DIR", ROOT / "test-ED")
+    monkeypatch.setattr(app_module, "PDF_DIR", pdf_dir)
     monkeypatch.setattr(app_module, "OUTPUT_DIR", output_dir)
 
-    response = TestClient(app_module.app).post(
+    client = TestClient(app_module.app)
+    response = client.post(
         "/api/frame-detection",
         json={
-            "document": "59105-0SBG000.pdf",
+            "document": "drawing.pdf",
             "page": 1,
             "load_id": "20260617T040045193Z",
         },
@@ -246,9 +250,35 @@ def test_frame_detection_endpoint_writes_overlay_for_frontend(tmp_path, monkeypa
     job_dir = output_dir / payload["job_id"]
     assert payload["output_dir"] == f"output/{payload['job_id']}"
     assert payload["file"] == f"/output/{payload['job_id']}/frame_detection/frame_detection_results.json"
-    assert payload["overlays"]["1"] == f"/output/{payload['job_id']}/frame_detection/page_001/overlay.png"
-    assert (job_dir / "frame_detection" / "page_001" / "overlay.png").is_file()
-    assert payload["pages"][0]["source"] == "pdf_text"
+    assert sorted(payload["overlays"]) == ["1", "2", "3"]
+    for page_number in range(1, 4):
+        assert payload["overlays"][str(page_number)] == (
+            f"/output/{payload['job_id']}/frame_detection/page_{page_number:03d}/overlay.png"
+        )
+        assert (
+            job_dir / "frame_detection" / f"page_{page_number:03d}" / "overlay.png"
+        ).is_file()
+
+    saved = client.post(
+        "/api/jobs",
+        json={
+            "document": "drawing.pdf",
+            "page": 1,
+            "load_id": "20260617T040045193Z",
+            "action": "save",
+            "boxes": [{"id": 1, "page": 1, "x": 10, "y": 12, "width": 30, "height": 24}],
+        },
+    )
+
+    assert saved.status_code == 200
+    frame_result = json.loads(
+        (job_dir / "frame_detection" / "frame_detection_results.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert [page["page"] for page in frame_result["pages"]] == [1, 2, 3]
+    assert (job_dir / "frame_detection" / "page_002" / "overlay.png").is_file()
+    assert (job_dir / "frame_detection" / "page_003" / "overlay.png").is_file()
 
 
 def test_different_loads_create_separate_time_ordered_outputs(tmp_path, monkeypatch):

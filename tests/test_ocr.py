@@ -85,6 +85,43 @@ def test_crop_feature_control_regions_rejects_text_without_horizontal_frame():
     assert crop_feature_control_regions(image) is None
 
 
+def test_classifier_uses_symbol_cell_when_horizontal_frame_is_missing(monkeypatch):
+    image = Image.new("RGB", (178, 35), "white")
+    draw = ImageDraw.Draw(image)
+    for x in (2, 40, 104, 140, 177):
+        draw.line((x, 0, x, 34), fill="black")
+    draw.ellipse((11, 8, 31, 28), outline="black")
+    draw.line((21, 2, 21, 32), fill="black")
+    draw.line((7, 18, 35, 18), fill="black")
+    draw.rectangle((50, 10, 90, 24), fill="black")
+
+    crop_boxes = []
+    classifier_inputs = []
+    original_crop = Image.Image.crop
+
+    def record_crop(source, box=None):
+        if source is image:
+            crop_boxes.append(box)
+        return original_crop(source, box)
+
+    monkeypatch.setattr(Image.Image, "crop", record_crop)
+    monkeypatch.setattr(ocr_filters, "normalize_symbol_crop", lambda symbol: symbol)
+    monkeypatch.setattr(
+        ocr_filters,
+        "classify_symbol",
+        lambda symbol, *_: classifier_inputs.append(symbol.copy())
+        or ("POSITION", 0.99),
+    )
+
+    result = ocr_filters.classify_gd_tag(image, {}, 0.4)
+
+    assert result is not None
+    assert result[0] == "[GD_POSITION]"
+    assert crop_boxes == [(4, 0, 38, 35), (42, 0, 175, 35)]
+    assert [symbol.size for symbol in classifier_inputs] == [(34, 35)]
+    assert classifier_inputs[0].getpixel((17, 17)) == (0, 0, 0)
+
+
 def test_classify_gd_tag_uses_best_candidate_when_left_frame_is_inset(monkeypatch):
     image = Image.new("RGB", (191, 51), "white")
     draw = ImageDraw.Draw(image)
