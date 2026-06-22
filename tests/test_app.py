@@ -426,3 +426,51 @@ def test_recognize_job_requires_existing_job(tmp_path, monkeypatch):
     response = TestClient(app_module.app).post("/api/jobs/missing/ocr")
 
     assert response.status_code == 404
+
+
+def test_export_job_excel_returns_preview_and_download_urls(tmp_path, monkeypatch):
+    output_dir = tmp_path / "output"
+    job_dir = output_dir / "20260615T120000000Z_drawing"
+    job_dir.mkdir(parents=True)
+    (job_dir / "ocr_results.json").write_text('{"results": []}', encoding="utf-8")
+
+    def fake_run_excel_job(target, output_format):
+        assert target == job_dir
+        assert output_format == "MIP"
+        return {"status": "success", "rows": 12}
+
+    monkeypatch.setattr(app_module, "OUTPUT_DIR", output_dir)
+    monkeypatch.setattr(app_module, "run_excel_job", fake_run_excel_job)
+
+    response = TestClient(app_module.app).post(
+        f"/api/jobs/{job_dir.name}/excel",
+        json={"format": "MIP"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "format": "MIP",
+        "rows": 12,
+        "file": f"/output/{job_dir.name}/excel-output/MIP/MIP_filled.xls",
+        "previews": [
+            {
+                "sheet": sheet,
+                "file": f"/output/{job_dir.name}/excel-output/MIP/{sheet}_snapshot.png",
+            }
+            for sheet in ("MIP", "SUQC", "IPQC", "OGQC")
+        ],
+    }
+
+
+def test_export_job_excel_requires_ocr_results(tmp_path, monkeypatch):
+    output_dir = tmp_path / "output"
+    job_dir = output_dir / "20260615T120000000Z_drawing"
+    job_dir.mkdir(parents=True)
+    monkeypatch.setattr(app_module, "OUTPUT_DIR", output_dir)
+
+    response = TestClient(app_module.app).post(
+        f"/api/jobs/{job_dir.name}/excel",
+        json={"format": "QC"},
+    )
+
+    assert response.status_code == 400

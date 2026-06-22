@@ -1,16 +1,13 @@
 import argparse
 import gc
 import sys
-import time
+import tempfile
 from pathlib import Path
 
-from PIL import ImageGrab
+import fitz
 
 
 DEFAULT_SHEET = "MIP"
-XL_SCREEN = 1
-XL_BITMAP = 2
-XL_PICTURE = -4147
 
 
 def snapshot_workbook(
@@ -59,7 +56,7 @@ def snapshot_workbook(
 
         worksheet.Activate()
         target.Select()
-        copy_range_to_png(target, output_path)
+        export_range_via_pdf(target, output_path)
         address = str(target.Address).replace("$", "")
         return {
             "workbook": str(workbook_path),
@@ -91,33 +88,24 @@ def auto_range(worksheet, min_rows, min_cols):
     )
 
 
-def copy_range_to_png(target, output_path):
-    target.CopyPicture(Appearance=XL_SCREEN, Format=XL_BITMAP)
-    for _ in range(20):
-        image = ImageGrab.grabclipboard()
-        if hasattr(image, "save"):
-            image.save(output_path, "PNG")
-            return
-        time.sleep(0.1)
-    export_range_via_temp_chart(target, output_path)
-
-
-def export_range_via_temp_chart(target, output_path):
+def export_range_via_pdf(target, output_path):
     worksheet = target.Worksheet
-    target.CopyPicture(Appearance=XL_SCREEN, Format=XL_PICTURE)
-    chart_object = worksheet.ChartObjects().Add(
-        target.Left,
-        target.Top,
-        target.Width,
-        target.Height,
-    )
+
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temporary:
+        pdf_path = Path(temporary.name)
     try:
-        chart_object.Activate()
-        chart = chart_object.Chart
-        chart.Paste()
-        chart.Export(str(output_path), "PNG")
+        worksheet.ExportAsFixedFormat(
+            Type=0,
+            Filename=str(pdf_path),
+            Quality=0,
+            IncludeDocProperties=True,
+            IgnorePrintAreas=False,
+            OpenAfterPublish=False,
+        )
+        with fitz.open(pdf_path) as pdf:
+            pdf[0].get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False).save(output_path)
     finally:
-        chart_object.Delete()
+        pdf_path.unlink(missing_ok=True)
 
 
 def default_output_path(workbook_path, sheet_name):

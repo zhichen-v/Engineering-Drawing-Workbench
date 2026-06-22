@@ -554,6 +554,23 @@ kbd {
   opacity: 0.69;
 }
 
+.excel-preview-surface img {
+  max-width: calc(100vw - 690px);
+  background: white;
+}
+
+.excel-preview-hitbox {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  cursor: grab;
+  touch-action: none;
+}
+
+.canvas-viewport.is-panning .excel-preview-hitbox {
+  cursor: grabbing;
+}
+
 .crop-overlay,
 .recognition-overlay {
   position: absolute;
@@ -800,6 +817,36 @@ kbd {
   color: var(--green);
 }
 
+.excel-sheet-tabs {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  z-index: 4;
+  display: flex;
+  padding: 5px;
+  border: 1px solid var(--green-dark);
+  background: rgba(255, 253, 248, 0.94);
+  box-shadow: 4px 4px 0 rgba(12, 52, 53, 0.14);
+  backdrop-filter: blur(8px);
+}
+
+.excel-sheet-tabs button {
+  min-width: 54px;
+  height: 32px;
+  padding: 0 9px;
+  color: var(--muted);
+  border: 1px solid transparent;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.excel-sheet-tabs button.active {
+  color: white;
+  border-color: var(--green-dark);
+  background: var(--green-dark);
+}
+
 .layer-swatch {
   width: 17px;
   height: 17px;
@@ -973,6 +1020,98 @@ kbd {
 
 .primary-button:hover:not(:disabled) {
   background: var(--green);
+}
+
+.excel-export {
+  margin-top: 16px;
+  padding-top: 15px;
+  border-top: 1px dashed var(--line-strong);
+}
+
+.excel-export-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.excel-export-heading span {
+  color: var(--amber);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.15em;
+}
+
+.excel-export-heading small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.excel-format-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+  margin-top: 9px;
+}
+
+.excel-format-switch button {
+  height: 36px;
+  color: var(--muted);
+  border: 1px solid var(--line-strong);
+  background: var(--paper);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.excel-format-switch button.active {
+  color: white;
+  border-color: var(--green-dark);
+  background: var(--green-dark);
+}
+
+.excel-generate-button {
+  min-height: 44px;
+  font-size: 14px;
+  letter-spacing: 0.01em;
+}
+
+.excel-result {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid rgba(15, 91, 82, 0.35);
+  background: var(--green-soft);
+}
+
+.excel-result > span {
+  display: block;
+  color: var(--green-dark);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.excel-result > div {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.excel-result button,
+.excel-download {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--green-dark);
+  font-size: 12px;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.excel-download {
+  color: white;
+  background: var(--green-dark);
 }
 
 .job-result {

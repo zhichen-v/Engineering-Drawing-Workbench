@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import subprocess
+import sys
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -57,6 +59,10 @@ class FrameDetectionRequest(BaseModel):
     document: str
     page: int = Field(ge=1)
     load_id: str = Field(pattern=r"^\d{8}T\d{9}Z$")
+
+
+class ExcelRequest(BaseModel):
+    format: Literal["MIP", "QC"]
 
 
 def build_job_path(document: str, load_id: str) -> tuple[str, Path]:
@@ -117,6 +123,27 @@ def run_ocr_job(
         ),
         progress_callback=progress_callback,
     )
+
+
+def run_excel_job(job_dir: Path, output_format: Literal["MIP", "QC"]) -> dict[str, object]:
+    script = BASE_DIR / "src" / "excel-method" / (
+        "fill_MIP_all.py" if output_format == "MIP" else "fill_QC.py"
+    )
+    process = subprocess.run(
+        [sys.executable, str(script), "--job", str(job_dir)],
+        cwd=BASE_DIR,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    if process.returncode:
+        raise RuntimeError((process.stderr or process.stdout).strip() or "Excel export failed")
+
+    lines = [line for line in process.stdout.splitlines() if line.strip()]
+    if not lines:
+        raise RuntimeError("Excel export returned no result")
+    return json.loads(lines[-1])
 
 
 def build_ocr_result(job_id: str, output_path: Path) -> dict[str, object]:
@@ -374,3 +401,35 @@ def start_ocr_task(job_id: str, background_tasks: BackgroundTasks) -> dict[str, 
 def get_ocr_task_status(job_id: str, task_id: str) -> dict[str, object]:
     get_job_dir(job_id)
     return read_ocr_task(job_id, task_id)
+
+
+@app.post("/api/jobs/{job_id}/excel")
+def export_job_excel(job_id: str, request: ExcelRequest) -> dict[str, object]:
+    job_dir = get_job_dir(job_id)
+    if not (job_dir / "ocr_results.json").is_file():
+        raise HTTPException(status_code=400, detail="OCR results are required before Excel export")
+
+    try:
+        result = run_excel_job(job_dir, request.format)
+    except (json.JSONDecodeError, ValueError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=f"Excel export failed: {error}") from error
+
+    output_dir = f"/output/{job_id}/excel-output/{request.format}"
+    if request.format == "MIP":
+        excel_file = f"{output_dir}/MIP_filled.xls"
+        previews = [
+            {"sheet": sheet, "file": f"{output_dir}/{sheet}_snapshot.png"}
+            for sheet in ("MIP", "SUQC", "IPQC", "OGQC")
+        ]
+    else:
+        excel_file = f"{output_dir}/QC_filled.xlsm"
+        previews = [{"sheet": "OGQC", "file": f"{output_dir}/QC_snapshot.png"}]
+
+    return {
+        "format": request.format,
+        "rows": result.get("rows", 0),
+        "file": excel_file,
+        "previews": previews,
+    }

@@ -369,6 +369,10 @@ function App() {
   const [frameLayerVisible, setFrameLayerVisible] = useState(true);
   const [viewMode, setViewMode] = useState("edit");
   const [recognitionVisible, setRecognitionVisible] = useState(true);
+  const [excelFormat, setExcelFormat] = useState("MIP");
+  const [excelResult, setExcelResult] = useState(null);
+  const [excelPreviewIndex, setExcelPreviewIndex] = useState(0);
+  const [excelGenerating, setExcelGenerating] = useState(false);
   const [toast, setToast] = useState("");
 
   const overlayRef = useRef(null);
@@ -400,6 +404,7 @@ function App() {
   const frameGridReady = framePageIsReady(currentFramePage);
   const frameOverlayUrl = frameDetection?.overlays?.[String(page)] || "";
   const selectedFrameLocation = locateFrameCell(currentFramePage, selectedBox);
+  const currentExcelPreview = excelResult?.previews?.[excelPreviewIndex] || null;
   const ocrProgressText = ocrProgress.total
     ? `${Math.min(ocrProgress.current, ocrProgress.total)} / ${ocrProgress.total}`
     : "";
@@ -412,7 +417,11 @@ function App() {
     ? "執行圖框識別中"
     : recognizing
       ? (ocrStage === "model_loading" ? "載入 OCR 模型中" : "OCR 辨識中")
-      : "載入工程圖面中";
+      : excelGenerating
+        ? `產生 ${excelFormat} Excel 中`
+        : viewMode === "excel"
+          ? "載入 Excel 預覽中"
+          : "載入工程圖面中";
   const canvasBusyDetail = detectingFrame
     ? "正在建立圖框座標與 overlay"
     : recognizing
@@ -421,7 +430,11 @@ function App() {
           ? "正在準備 GLM-OCR 與符號模型，首次啟動會較久"
           : `模型已就緒，正在辨識 crop ${ocrProgressText || ""}`.trim()
       )
-      : "正在建立高解析度預覽";
+      : excelGenerating
+        ? "正在填入表單並建立 Excel 預覽截圖"
+        : viewMode === "excel"
+          ? "正在載入工作表預覽"
+          : "正在建立高解析度預覽";
 
   function showToast(message) {
     setToast(message);
@@ -482,6 +495,9 @@ function App() {
     setFrameLayerVisible(true);
     setViewMode("edit");
     setRecognitionVisible(true);
+    setExcelResult(null);
+    setExcelPreviewIndex(0);
+    setExcelGenerating(false);
     resetBoxes();
   }
 
@@ -559,7 +575,7 @@ function App() {
     if (!imageSize.width) return;
     capturePointer(event.pointerId);
 
-    if (viewMode === "recognition" || activeTool === "select") {
+    if (viewMode !== "edit" || activeTool === "select") {
       setSelectedId(null);
       setInteraction({
         type: "pan",
@@ -793,6 +809,7 @@ function App() {
     setBusy(true);
     setRecognizing(true);
     setRecognitionComplete(false);
+    setExcelResult(null);
     setOcrStage("model_loading");
     setOcrProgress({ current: 0, total: documentBoxes.length, reused: 0, crop: "" });
     setJobResult(null);
@@ -828,6 +845,53 @@ function App() {
     setInteraction(null);
     setActiveTool("select");
     showToast("已返回標註編輯模式");
+  }
+
+  function returnToRecognition() {
+    setViewMode("recognition");
+    setSelectedId(null);
+    setInteraction(null);
+    setLoading(true);
+    resetView();
+    showToast("已返回 OCR 辨識結果");
+  }
+
+  function changeExcelFormat(format) {
+    setExcelFormat(format);
+    setExcelResult(null);
+    setExcelPreviewIndex(0);
+    if (viewMode === "excel") returnToRecognition();
+  }
+
+  async function submitExcel() {
+    if (!recognitionComplete || !ocrResult || !savedJobId) {
+      showToast("請先完成 OCR 辨識");
+      return;
+    }
+
+    setBusy(true);
+    setExcelGenerating(true);
+    try {
+      const response = await fetch(`/api/jobs/${encodeURIComponent(savedJobId)}/excel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ format: excelFormat }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || "Excel 輸出失敗");
+
+      setExcelResult({ ...result, revision: Date.now() });
+      setExcelPreviewIndex(0);
+      setViewMode("excel");
+      setLoading(true);
+      resetView();
+      showToast(`${excelFormat} Excel 已產生`);
+    } catch (error) {
+      showToast(error.message);
+    } finally {
+      setExcelGenerating(false);
+      setBusy(false);
+    }
   }
 
   return (
@@ -879,14 +943,14 @@ function App() {
 
         <section>
           <SectionHeading step="02" eyebrow="TOOLS" title="標註工具" />
-          {viewMode === "recognition" ? (
+          {viewMode !== "edit" ? (
             <ToolButton
               active
               icon={<SelectIcon />}
-              title="重新編輯"
-              description="保留目前 box，返回標註模式"
-              shortcut="EDIT"
-              onClick={returnToEdit}
+              title={viewMode === "excel" ? "返回 OCR 結果" : "重新編輯"}
+              description={viewMode === "excel" ? "關閉 Excel 預覽" : "保留目前 box，返回標註模式"}
+              shortcut={viewMode === "excel" ? "OCR" : "EDIT"}
+              onClick={viewMode === "excel" ? returnToRecognition : returnToEdit}
             />
           ) : (
             <>
@@ -953,11 +1017,18 @@ function App() {
             <AppearanceControls boxStyle={boxStyle} onChange={setBoxStyle} />
           ) : (
             <div className="recognition-mode-label">
-              <span>OCR VIEW</span>
-              <strong>辨識結果檢視</strong>
+              <span>{viewMode === "excel" ? "EXCEL VIEW" : "OCR VIEW"}</span>
+              <strong>
+                {viewMode === "excel"
+                  ? `${excelResult?.format} / ${currentExcelPreview?.sheet || ""}`
+                  : "辨識結果檢視"}
+              </strong>
             </div>
           )}
-          <p className="box-count"><strong>{boxes.length}</strong> 個裁切框</p>
+          <p className="box-count">
+            <strong>{viewMode === "excel" ? excelResult?.rows || 0 : boxes.length}</strong>
+            {viewMode === "excel" ? " 筆輸出資料" : " 個裁切框"}
+          </p>
         </div>
 
         <div
@@ -965,14 +1036,14 @@ function App() {
           className={`canvas-viewport ${interaction?.type === "pan" ? "is-panning" : ""}`}
           onWheel={handleWheel}
         >
-          {(loading || recognizing || detectingFrame) && (
+          {(loading || recognizing || detectingFrame || excelGenerating) && (
             <div className="loading-state" role="status">
               <LoadingArc />
               <strong>{canvasBusyTitle}</strong>
               <small>{canvasBusyDetail}</small>
             </div>
           )}
-          {(frameOverlayUrl || (viewMode === "recognition" && ocrResult)) && (
+          {viewMode !== "excel" && (frameOverlayUrl || (viewMode === "recognition" && ocrResult)) && (
             <div className="recognition-toggle layer-toggle">
               {frameOverlayUrl && (
                 <button
@@ -998,11 +1069,62 @@ function App() {
               )}
             </div>
           )}
+          {viewMode === "excel" && excelResult?.previews.length > 1 && (
+            <div className="excel-sheet-tabs" aria-label="Excel 工作表預覽">
+              {excelResult.previews.map((preview, index) => (
+                <button
+                  className={index === excelPreviewIndex ? "active" : ""}
+                  key={preview.sheet}
+                  type="button"
+                  onClick={() => {
+                    if (index === excelPreviewIndex) return;
+                    setExcelPreviewIndex(index);
+                    setLoading(true);
+                    resetView();
+                  }}
+                >
+                  {preview.sheet}
+                </button>
+              ))}
+            </div>
+          )}
           {loadError && !loading && <div className="error-state">{loadError}</div>}
-          {previewUrl && (
+          {viewMode === "excel" && currentExcelPreview ? (
             <div
               ref={drawingSurfaceRef}
-              className={`drawing-surface ${loading || recognizing || detectingFrame ? "is-loading" : ""} ${viewMode === "recognition" ? "recognition-mode" : ""}`}
+              className={`drawing-surface excel-preview-surface ${loading ? "is-loading" : ""}`}
+              style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
+            >
+              <img
+                key={`${currentExcelPreview.file}-${excelResult.revision}`}
+                src={`${currentExcelPreview.file}?revision=${excelResult.revision}`}
+                alt={`${excelResult.format} ${currentExcelPreview.sheet} Excel 預覽`}
+                draggable="false"
+                onLoad={(event) => {
+                  setImageSize({
+                    width: event.currentTarget.naturalWidth,
+                    height: event.currentTarget.naturalHeight,
+                  });
+                  setLoading(false);
+                  setLoadError("");
+                }}
+                onError={() => {
+                  setLoading(false);
+                  setLoadError("Excel 預覽載入失敗");
+                }}
+              />
+              <div
+                ref={overlayRef}
+                className="excel-preview-hitbox"
+                onPointerDown={handleOverlayPointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+              />
+            </div>
+          ) : previewUrl && (
+            <div
+              ref={drawingSurfaceRef}
+              className={`drawing-surface ${loading || recognizing || detectingFrame || excelGenerating ? "is-loading" : ""} ${viewMode === "recognition" ? "recognition-mode" : ""}`}
               style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
             >
               <img
@@ -1062,7 +1184,13 @@ function App() {
       <aside className="side-panel action-panel">
         <section>
           <SectionHeading step="03" eyebrow="SELECTION" title="目前選取" />
-          {viewMode === "recognition" ? (
+          {viewMode === "excel" ? (
+            <div className="recognition-summary excel-summary">
+              <strong>{excelResult?.rows || 0}</strong>
+              <span>筆 {excelResult?.format} Excel 資料</span>
+              <small>目前預覽：{currentExcelPreview?.sheet || "--"}</small>
+            </div>
+          ) : viewMode === "recognition" ? (
             <div className="recognition-summary">
               <strong>{ocrResult?.results.length || 0}</strong>
               <span>筆 OCR 辨識結果</span>
@@ -1083,7 +1211,7 @@ function App() {
           <SectionHeading step="04" eyebrow="OUTPUT" title="輸出作業" />
           <button
             className={`ghost-button full-width action-button ${hasUnsavedBoxes ? "attention" : ""}`}
-            disabled={busy || !frameGridReady || documentBoxes.length === 0 || viewMode === "recognition"}
+            disabled={busy || !frameGridReady || documentBoxes.length === 0 || viewMode !== "edit"}
             onClick={() => submitJob("crop")}
           >儲存標註資料</button>
           <button
@@ -1095,7 +1223,7 @@ function App() {
               || documentBoxes.length === 0
               || hasUnsavedBoxes
               || !savedJobId
-              || viewMode === "recognition"
+              || viewMode !== "edit"
             }
             title={hasUnsavedBoxes ? "裁切框有變動，請先儲存標註資料" : ""}
             onClick={submitRecognition}
@@ -1103,6 +1231,58 @@ function App() {
             <span>{recognitionButtonText}</span>
             <span aria-hidden="true">→</span>
           </button>
+          {recognitionComplete && ocrResult && (
+            <div className="excel-export">
+              <div className="excel-export-heading">
+                <span>EXCEL EXPORT</span>
+                <small>根據目前 OCR 結果輸出</small>
+              </div>
+              <div className="excel-format-switch" aria-label="Excel 輸出格式">
+                {["MIP", "QC"].map((format) => (
+                  <button
+                    className={format === excelFormat ? "active" : ""}
+                    key={format}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => format !== excelFormat && changeExcelFormat(format)}
+                  >
+                    {format}
+                  </button>
+                ))}
+              </div>
+              <button
+                className="primary-button excel-generate-button"
+                type="button"
+                disabled={busy}
+                onClick={submitExcel}
+              >
+                <span>{excelGenerating ? "產生 Excel 中" : `產生 ${excelFormat} Excel`}</span>
+                <span aria-hidden="true">→</span>
+              </button>
+              {excelResult && (
+                <div className="excel-result">
+                  <span>✓ {excelResult.format} 已產生・{excelResult.rows} 筆</span>
+                  <div>
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      disabled={viewMode === "excel"}
+                      onClick={() => {
+                        setViewMode("excel");
+                        setLoading(true);
+                        resetView();
+                      }}
+                    >
+                      Canvas 預覽
+                    </button>
+                    <a className="excel-download" href={excelResult.file} download>
+                      下載 Excel
+                    </a>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           {jobResult && (
             <div className="job-result" key={jobResult.revision}>
               <span className="result-status">
