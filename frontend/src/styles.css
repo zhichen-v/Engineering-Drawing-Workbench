@@ -146,6 +146,10 @@ select:disabled {
   border-left: 1px solid var(--line-strong);
 }
 
+.action-panel > section:first-child {
+  min-height: 192px;
+}
+
 .side-panel section + section {
   margin-top: 30px;
   padding-top: 27px;
@@ -874,16 +878,18 @@ kbd {
 }
 
 .selection-details {
+  display: grid;
+  gap: 6px;
   margin: 0;
-  border-top: 1px solid var(--line);
 }
 
 .selection-details div {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  padding: 13px 0;
-  border-bottom: 1px solid var(--line);
+  padding: 11px 12px;
+  border-left: 3px solid var(--green);
+  background: var(--green-soft);
 }
 
 .selection-details dt {
@@ -945,10 +951,6 @@ kbd {
   color: var(--muted);
   font-size: 11px;
   line-height: 1.5;
-}
-
-.output-section {
-  margin-top: auto !important;
 }
 
 .action-button {

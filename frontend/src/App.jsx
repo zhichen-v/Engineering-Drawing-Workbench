@@ -241,10 +241,10 @@ function CropOverlay({
               <rect
                 key={handle.name}
                 className={`resize-handle resize-${handle.name}`}
-                x={handle.x(box) - 10}
-                y={handle.y(box) - 10}
-                width="20"
-                height="20"
+                x={handle.x(box) - 4}
+                y={handle.y(box) - 4}
+                width="8"
+                height="8"
                 data-handle={handle.name}
                 onPointerDown={(event) => onBoxPointerDown(event, box.id, handle.name)}
               />
@@ -674,7 +674,7 @@ function App() {
     setBoxes(grouped[page] || []);
     setSelectedId(null);
     setInteraction(null);
-    showToast("已刪除選取框，編號已依原順序重新排列");
+    showToast("已刪除選取框");
   }
 
   function changeDocument(nextDocument) {
@@ -1075,7 +1075,6 @@ function App() {
               <div><dt>BOX ID</dt><dd>#{String(selectedBox.id).padStart(2, "0")}</dd></div>
               <div><dt>圖框位置</dt><dd>{selectedFrameLocation || "未定位"}</dd></div>
               <div><dt>座標</dt><dd>X {Math.round(selectedBox.x)} / Y {Math.round(selectedBox.y)}</dd></div>
-              <div><dt>尺寸</dt><dd>{Math.round(selectedBox.width)} × {Math.round(selectedBox.height)} PX</dd></div>
             </dl>
           )}
         </section>
