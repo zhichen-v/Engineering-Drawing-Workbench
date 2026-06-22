@@ -167,6 +167,8 @@ def write_rows(worksheet, rows, layout):
             if column in text_columns:
                 cell.NumberFormat = "@"
             cell.Value = row.get(key, "")
+            if row.get("abnormal") and key in ("excel_specification", "specification"):
+                cell.Font.Color = 255
 
 
 def insert_images(worksheet, rows, layout, image_dir):

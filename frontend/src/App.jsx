@@ -308,7 +308,10 @@ function RecognitionOverlay({
         const labelY = box.y + box.height / 2;
         const numberY = Math.max(0, box.y - 36);
         return (
-          <g key={result.crop_number} className="recognition-result">
+          <g
+            key={result.crop_number}
+            className={`recognition-result ${result.abnormal ? "abnormal" : ""}`}
+          >
             <rect
               className="recognition-box"
               x={box.x}
@@ -1025,10 +1028,6 @@ function App() {
           )}
         </section>
 
-        <section className="tip-card">
-          <strong>操作提示</strong>
-          <p>滾動滑鼠縮放圖面；建立 box 後可直接拖曳或調整四角。選取模式下拖曳空白處可平移圖面。</p>
-        </section>
       </aside>
 
       <main className="workspace">

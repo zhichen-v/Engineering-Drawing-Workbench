@@ -32,6 +32,7 @@ try:
         crop_feature_control_regions,
         crop_leading_symbol,
         has_diameter_symbol,
+        has_ocr_artifacts,
         line_centers,
         normalize_ocr_text,
         normalize_symbol_crop,
@@ -44,6 +45,7 @@ except ImportError:
         crop_feature_control_regions,
         crop_leading_symbol,
         has_diameter_symbol,
+        has_ocr_artifacts,
         line_centers,
         normalize_ocr_text,
         normalize_symbol_crop,
@@ -176,10 +178,12 @@ def run_ocr(
     for crop_number, path in crops:
         previous = previous_results.get(crop_number)
         if previous and previous.get("box") == boxes[crop_number]:
+            text = normalize_ocr_text(previous.get("ocr", ""))
             results_by_number[crop_number] = {
                 **previous,
                 "frame_location": boxes[crop_number].get("frame_location"),
-                "ocr": normalize_ocr_text(previous.get("ocr", "")),
+                "ocr": text,
+                "abnormal": has_ocr_artifacts(text),
             }
         else:
             pending.append((crop_number, path))
@@ -242,6 +246,7 @@ def run_ocr(
             "box": boxes[crop_number],
             "frame_location": boxes[crop_number].get("frame_location"),
             "ocr": text,
+            "abnormal": has_ocr_artifacts(text),
         }
         if progress_callback:
             progress_callback(

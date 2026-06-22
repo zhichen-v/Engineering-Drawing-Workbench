@@ -118,6 +118,7 @@ def parse_ocr_result(result, job_dir, tolerance_profile, unit):
         "suqc": "*",
         "ipqc": "○",
         "ogqc": "◎",
+        "abnormal": bool(result.get("abnormal")),
     }
     if image_path:
         output_row["specification_image"] = str(image_path)
@@ -166,6 +167,7 @@ def build_qc_output_row(normalized_row):
         "tolerance_plus": tolerance_plus,
         "tolerance_minus": tolerance_minus,
         "measuring_equipment": output["measuring_equipment"],
+        "abnormal": output["abnormal"],
     }
 
 

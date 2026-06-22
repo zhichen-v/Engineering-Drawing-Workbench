@@ -145,7 +145,7 @@ input:disabled {
   border-left: 1px solid var(--line-strong);
 }
 
-.action-panel > section:first-child {
+.side-panel > section:first-child {
   min-height: 192px;
 }
 
@@ -393,24 +393,6 @@ kbd {
   margin-top: 10px;
 }
 
-.tip-card {
-  color: var(--green-dark);
-  border: 1px solid rgba(189, 117, 25, 0.45) !important;
-  background: var(--amber-soft);
-  padding: 15px !important;
-}
-
-.tip-card strong {
-  font-size: 13px;
-}
-
-.tip-card p {
-  margin: 7px 0 0;
-  color: #73592f;
-  font-size: 13px;
-  line-height: 1.65;
-}
-
 .workspace {
   min-width: 0;
   background: var(--surface);
@@ -636,6 +618,10 @@ kbd {
   fill: #fff200;
   fill-opacity: 0.59;
   stroke: none;
+}
+
+.recognition-result.abnormal .recognition-box {
+  fill: #ff3b30;
 }
 
 .recognition-number-box {

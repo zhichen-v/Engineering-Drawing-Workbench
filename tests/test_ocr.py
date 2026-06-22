@@ -194,6 +194,15 @@ def test_normalize_ocr_text_converts_latex_symbol_variants():
     assert ocr_filters.normalize_ocr_text(r"{\varnothing} 10") == "⌀ 10"
     assert ocr_filters.normalize_ocr_text(r"{/varnothing} 10") == "⌀ 10"
     assert ocr_filters.normalize_ocr_text(r"$\varnothing$ 10") == "⌀ 10"
+    assert ocr_filters.normalize_ocr_text(r"6X \phi 0. 3 THRU") == "6X ⌀ 0.3 THRU"
+    assert ocr_filters.normalize_ocr_text(r"6X /phi 0.3 THRU") == "6X ⌀ 0.3 THRU"
+
+
+def test_has_ocr_artifacts_ignores_normalized_dimensions_and_gd_tags():
+    assert not ocr_filters.has_ocr_artifacts("0.5 +0.02 -0")
+    assert not ocr_filters.has_ocr_artifacts("[GD_PARALLELISM] 0.02 A")
+    assert ocr_filters.has_ocr_artifacts(r"10_{\foo}")
+    assert ocr_filters.has_ocr_artifacts("1/2")
 
 
 def test_has_diameter_symbol_stops_at_gap_before_text(monkeypatch):
@@ -271,6 +280,7 @@ def test_run_ocr_reuses_unchanged_box_results_before_loading_models(tmp_path, mo
             "box": box,
             "frame_location": "D3",
             "ocr": "0.5 +0.02 -0",
+            "abnormal": False,
         }
     ]
 
@@ -308,7 +318,7 @@ def test_run_ocr_only_recognizes_changed_boxes(tmp_path, monkeypatch):
     monkeypatch.setattr(
         ocr,
         "recognize_image",
-        lambda image, *_: recognized.append(image.size) or "UPDATED",
+        lambda image, *_: recognized.append(image.size) or r"10_{\foo}",
     )
 
     output_path = ocr.run_ocr(
@@ -325,7 +335,8 @@ def test_run_ocr_only_recognizes_changed_boxes(tmp_path, monkeypatch):
 
     result = json.loads(output_path.read_text(encoding="utf-8"))
     assert recognized == [(40, 30)]
-    assert [item["ocr"] for item in result["results"]] == ["KEEP", "UPDATED"]
+    assert [item["ocr"] for item in result["results"]] == ["KEEP", r"10_{\foo}"]
+    assert [item["abnormal"] for item in result["results"]] == [False, True]
 
 
 def test_run_ocr_converts_exact_parallelism_slashes_to_gd_tag(tmp_path, monkeypatch):
@@ -361,6 +372,7 @@ def test_run_ocr_converts_exact_parallelism_slashes_to_gd_tag(tmp_path, monkeypa
 
     result = json.loads(output_path.read_text(encoding="utf-8"))
     assert result["results"][0]["ocr"] == "[GD_PARALLELISM]"
+    assert result["results"][0]["abnormal"] is False
 
 
 def test_run_ocr_reports_model_loading_before_recognition(tmp_path, monkeypatch):

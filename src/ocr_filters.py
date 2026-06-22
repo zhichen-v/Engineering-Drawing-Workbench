@@ -333,9 +333,9 @@ def flatten_unilateral_tolerance(text: str) -> str:
 def normalize_ocr_text(text: str) -> str:
     text = re.sub(
         r"(?:"
-        r"\$\s*[\\/](?:varnothing|diameter|oslash)\s*\$"
-        r"|\{\s*[\\/](?:varnothing|diameter|oslash)\s*\}"
-        r"|[\\/](?:varnothing|diameter|oslash)"
+        r"\$\s*[\\/](?:varnothing|diameter|oslash|phi)\s*\$"
+        r"|\{\s*[\\/](?:varnothing|diameter|oslash|phi)\s*\}"
+        r"|[\\/](?:varnothing|diameter|oslash|phi)"
         r")",
         "⌀",
         text,
@@ -348,10 +348,16 @@ def normalize_ocr_text(text: str) -> str:
     text = re.sub(r"\$?\s*\\pm\s*", "±", text)
     text = text.replace("$", "")
     text = re.sub(r"(\d)\.\s*(\d)\s+(\d)\b", r"\1.\2\3", text)
+    text = re.sub(r"(?<=\d)\.\s+(?=\d)", ".", text)
     text = " ".join(text.split())
     text = re.sub(r"([+-])\s+(?=\d|\.)", r"\1", text)
     text = normalize_unilateral_tolerance(text)
     return flatten_unilateral_tolerance(text)
+
+
+def has_ocr_artifacts(text: str) -> bool:
+    text = re.sub(r"\[GD_[A-Z_]+\]", "", text, flags=re.IGNORECASE)
+    return re.search(r"[\\/{}_^]", text) is not None
 
 
 def clean_gd_value_text(text: str) -> str:

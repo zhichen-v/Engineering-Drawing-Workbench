@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -7,12 +8,18 @@ MODULE_PATH = ROOT / "src" / "excel-method" / "ocr_parser.py"
 SPEC = importlib.util.spec_from_file_location("excel_ocr_parser_qc", MODULE_PATH)
 OCR_PARSER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(OCR_PARSER)
+WRITER_SPEC = importlib.util.spec_from_file_location(
+    "excel_writer_test",
+    ROOT / "src" / "excel-method" / "excel_writer.py",
+)
+EXCEL_WRITER = importlib.util.module_from_spec(WRITER_SPEC)
+WRITER_SPEC.loader.exec_module(EXCEL_WRITER)
 PROFILE = OCR_PARSER.load_json(
     ROOT / "src" / "excel-method" / "tolerance_profile.json"
 )
 
 
-def qc_row(text, crop_number=1):
+def qc_row(text, crop_number=1, abnormal=False):
     _, rows = OCR_PARSER.build_qc_rows(
         {
             "results": [
@@ -23,6 +30,7 @@ def qc_row(text, crop_number=1):
                         "frame_location": "C4",
                     },
                     "ocr": text,
+                    "abnormal": abnormal,
                 }
             ]
         },
@@ -94,3 +102,36 @@ def test_explicit_angle_tolerance_still_takes_priority():
 
     assert row["tolerance_plus"] == "+1°"
     assert row["tolerance_minus"] == "-1°"
+
+
+def test_abnormal_ocr_colors_only_the_excel_specification_red():
+    row = qc_row(r"10_{\foo}", abnormal=True)
+
+    class Worksheet:
+        def __init__(self):
+            self.cells = {}
+
+        def Cells(self, excel_row, column):
+            return self.cells.setdefault(
+                (excel_row, column),
+                SimpleNamespace(
+                    Font=SimpleNamespace(Name=None, Color=None),
+                    NumberFormat=None,
+                    Value=None,
+                ),
+            )
+
+    worksheet = Worksheet()
+    layout = EXCEL_WRITER.TableLayout(
+        sheet_name="TEST",
+        data_start_row=1,
+        template_data_rows=1,
+        last_column=2,
+        columns=(("specification", 1), ("tolerance_plus", 2)),
+    )
+
+    EXCEL_WRITER.write_rows(worksheet, [row], layout)
+
+    assert row["abnormal"] is True
+    assert worksheet.Cells(1, 1).Font.Color == 255
+    assert worksheet.Cells(1, 2).Font.Color is None
