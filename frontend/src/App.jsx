@@ -282,9 +282,6 @@ function FrameDetectionOverlay({ revision, src, visible }) {
 
 function RecognitionOverlay({
   imageSize,
-  onPointerDown,
-  onPointerMove,
-  onPointerUp,
   overlayRef,
   results,
   visible,
@@ -295,10 +292,6 @@ function RecognitionOverlay({
       className="recognition-overlay"
       viewBox={`0 0 ${imageSize.width} ${imageSize.height}`}
       aria-label="OCR 辨識結果標註層"
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
     >
       {visible && results.map((result) => {
         const box = result.box;
@@ -355,7 +348,7 @@ function App() {
   const [interaction, setInteraction] = useState(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [boxStyle, setBoxStyle] = useState({ strokeWidth: 1, opacity: 45, color: BOX_COLORS[3].value });
+  const [boxStyle, setBoxStyle] = useState({ strokeWidth: 1, opacity: 45, color: BOX_COLORS[2].value });
   const [imageSize, setImageSize] = useState(EMPTY_IMAGE_SIZE);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -386,6 +379,7 @@ function App() {
   const toastTimerRef = useRef(null);
   const loadIdRef = useRef("");
   const pageBoxesRef = useRef({});
+  const resumeCropRef = useRef(false);
 
   const documentName = currentDocument?.id || "";
   const selectedBox = boxes.find((box) => box.id === selectedId);
@@ -475,6 +469,7 @@ function App() {
       showToast("請先執行圖框識別");
       return;
     }
+    resumeCropRef.current = false;
     setActiveTool(tool);
     setDraft(null);
     setInteraction(null);
@@ -485,6 +480,7 @@ function App() {
   }
 
   function beginDocumentLoad() {
+    resumeCropRef.current = false;
     loadIdRef.current = createLoadId();
     setJobResult(null);
     setSavedJobId("");
@@ -547,15 +543,24 @@ function App() {
     };
   }
 
-  function capturePointer(pointerId) {
-    if (overlayRef.current && !overlayRef.current.hasPointerCapture(pointerId)) {
-      overlayRef.current.setPointerCapture(pointerId);
+  function capturePointer(target, pointerId) {
+    if (target && !target.hasPointerCapture(pointerId)) {
+      target.setPointerCapture(pointerId);
     }
   }
 
   function handleOverlayPointerDown(event) {
     if (!imageSize.width) return;
-    capturePointer(event.pointerId);
+    capturePointer(event.currentTarget, event.pointerId);
+
+    if (viewMode === "edit" && activeTool === "select" && resumeCropRef.current) {
+      resumeCropRef.current = false;
+      setActiveTool("crop");
+      const start = pointFromEvent(event);
+      setSelectedId(null);
+      setDraft({ ...start, width: 0, height: 0, start });
+      return;
+    }
 
     if (viewMode !== "edit" || activeTool === "select") {
       setSelectedId(null);
@@ -574,8 +579,13 @@ function App() {
 
   function handleBoxPointerDown(event, boxId, handle = null) {
     if (viewMode !== "edit") return;
+    event.preventDefault();
     event.stopPropagation();
-    capturePointer(event.pointerId);
+    if (activeTool !== "select") {
+      resumeCropRef.current = true;
+      setActiveTool("select");
+    }
+    capturePointer(overlayRef.current, event.pointerId);
     const box = boxes.find((current) => current.id === boxId);
     if (!box) return;
 
@@ -736,6 +746,7 @@ function App() {
       const currentPageReady = framePageIsReady(getFramePage(nextFrameDetection, page));
       setFrameDetection(nextFrameDetection);
       setFrameLayerVisible(true);
+      resumeCropRef.current = false;
       setActiveTool("select");
       showToast(currentPageReady ? `圖框識別完成，${readyPages} 頁可定位` : "目前頁面尚未取得格位座標");
     } catch (error) {
@@ -885,8 +896,10 @@ function App() {
     if (excelResult) {
       setExcelPreviewIndex(0);
       setViewMode("excel");
-      setLoading(true);
-      resetView();
+      if (viewMode !== "excel" || excelPreviewIndex !== 0) {
+        setLoading(true);
+        resetView();
+      }
       showToast(`${excelFormat} Excel 預覽已載入`);
       return;
     }
@@ -1147,8 +1160,13 @@ function App() {
           ) : previewUrl && (
             <div
               ref={drawingSurfaceRef}
-              className={`drawing-surface ${loading || recognizing || detectingFrame || excelGenerating ? "is-loading" : ""} ${viewMode === "recognition" ? "recognition-mode" : ""}`}
+              className={`drawing-surface ${loading || recognizing || detectingFrame || excelGenerating ? "is-loading" : ""} ${viewMode === "recognition" ? "recognition-mode" : ""} ${viewMode === "edit" && frameGridReady ? `${activeTool}-mode` : ""}`}
               style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
+              onPointerDown={viewMode === "recognition" ? handleOverlayPointerDown : undefined}
+              onPointerMove={viewMode === "recognition" ? handlePointerMove : undefined}
+              onPointerUp={viewMode === "recognition" ? handlePointerUp : undefined}
+              onPointerCancel={viewMode === "recognition" ? handlePointerLost : undefined}
+              onLostPointerCapture={viewMode === "recognition" ? handlePointerLost : undefined}
             >
               <img
                 key={previewUrl}
@@ -1192,9 +1210,6 @@ function App() {
               {imageSize.width > 0 && viewMode === "recognition" && ocrResult && (
                 <RecognitionOverlay
                   imageSize={imageSize}
-                  onPointerDown={handleOverlayPointerDown}
-                  onPointerMove={handlePointerMove}
-                  onPointerUp={handlePointerUp}
                   overlayRef={overlayRef}
                   results={currentOcrResults}
                   visible={recognitionVisible}
