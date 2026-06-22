@@ -5,6 +5,7 @@
 __pycache__/
 .pytest_cache/
 output/
+uploads/
 !src/symbol-classifierdata/output/
 !src/symbol-classifierdata/output/best.pt
 frontend/node_modules/

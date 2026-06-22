@@ -14,7 +14,7 @@ from typing import Any, Callable, Literal
 from uuid import uuid4
 
 import fitz
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
@@ -25,9 +25,11 @@ from src import frame_detection
 
 BASE_DIR = Path(__file__).resolve().parent
 PDF_DIR = BASE_DIR / "test-ED"
+UPLOAD_DIR = BASE_DIR / "uploads"
 OUTPUT_DIR = BASE_DIR / "output"
 STATIC_DIR = BASE_DIR / "static"
 PREVIEW_SCALE = 2.0
+MAX_UPLOAD_BYTES = 250 * 1024 * 1024
 OCR_TASKS: dict[str, dict[str, Any]] = {}
 OCR_TASK_LOCK = Lock()
 
@@ -80,7 +82,7 @@ def get_pdf_path(document: str) -> Path:
     if Path(document).name != document:
         raise HTTPException(status_code=400, detail="Invalid document name")
 
-    path = PDF_DIR / document
+    path = (UPLOAD_DIR if document.startswith("upload-") else PDF_DIR) / document
     if path.suffix.lower() != ".pdf" or not path.is_file():
         raise HTTPException(status_code=404, detail="PDF not found")
     return path
@@ -212,13 +214,43 @@ def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
-@app.get("/api/documents")
-def list_documents() -> list[dict[str, int | str]]:
-    documents = []
-    for path in sorted(PDF_DIR.glob("*.pdf")):
+@app.post("/api/documents/upload")
+async def upload_document(
+    request: Request,
+    filename: str = Query(min_length=1, max_length=255),
+) -> dict[str, int | str]:
+    if Path(filename).name != filename or Path(filename).suffix.lower() != ".pdf":
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+
+    UPLOAD_DIR.mkdir(exist_ok=True)
+    document = f"upload-{uuid4().hex}.pdf"
+    path = UPLOAD_DIR / document
+    size = 0
+    try:
+        with path.open("wb") as target:
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    raise HTTPException(status_code=413, detail="PDF exceeds 250 MB")
+                target.write(chunk)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+
+    try:
         with fitz.open(path) as pdf:
-            documents.append({"name": path.name, "pages": len(pdf)})
-    return documents
+            pages = len(pdf)
+            if pages < 1:
+                raise ValueError("PDF has no pages")
+    except Exception as error:
+        path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="Invalid PDF file") from error
+
+    # ponytail: one global upload; use per-user storage if concurrent users are added.
+    for old_upload in UPLOAD_DIR.glob("upload-*.pdf"):
+        if old_upload != path:
+            old_upload.unlink()
+    return {"id": document, "name": filename, "pages": pages, "source": "upload"}
 
 
 @app.get("/api/documents/{document}/pages/{page_number}/preview")

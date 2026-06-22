@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const EMPTY_IMAGE_SIZE = { width: 0, height: 0 };
 const MIN_BOX_SIZE = 20;
@@ -341,8 +341,7 @@ function RecognitionOverlay({
 }
 
 function App() {
-  const [documents, setDocuments] = useState([]);
-  const [documentName, setDocumentName] = useState("");
+  const [currentDocument, setCurrentDocument] = useState(null);
   const [page, setPage] = useState(1);
   const [boxes, setBoxes] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
@@ -353,8 +352,9 @@ function App() {
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [boxStyle, setBoxStyle] = useState({ strokeWidth: 1, opacity: 45, color: BOX_COLORS[3].value });
   const [imageSize, setImageSize] = useState(EMPTY_IMAGE_SIZE);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [jobResult, setJobResult] = useState(null);
   const [savedJobId, setSavedJobId] = useState("");
@@ -382,10 +382,7 @@ function App() {
   const loadIdRef = useRef("");
   const pageBoxesRef = useRef({});
 
-  const currentDocument = useMemo(
-    () => documents.find((document) => document.name === documentName),
-    [documents, documentName],
-  );
+  const documentName = currentDocument?.id || "";
   const selectedBox = boxes.find((box) => box.id === selectedId);
   const previewUrl = documentName
     ? `/api/documents/${encodeURIComponent(documentName)}/pages/${page}/preview?scale=${PREVIEW_RENDER_SCALE}`
@@ -512,28 +509,7 @@ function App() {
   }
 
   useEffect(() => {
-    let active = true;
-    async function loadDocuments() {
-      try {
-        const response = await fetch("/api/documents");
-        if (!response.ok) throw new Error("無法取得 PDF 清單");
-        const result = await response.json();
-        if (!result.length) throw new Error("test-ED 中沒有 PDF");
-        if (!active) return;
-        setDocuments(result);
-        setDocumentName(result[0].name);
-      } catch (error) {
-        if (!active) return;
-        setLoading(false);
-        setLoadError(error.message);
-        showToast(error.message);
-      }
-    }
-    loadDocuments();
-    return () => {
-      active = false;
-      window.clearTimeout(toastTimerRef.current);
-    };
+    return () => window.clearTimeout(toastTimerRef.current);
   }, []);
 
   useEffect(() => {
@@ -693,10 +669,30 @@ function App() {
     showToast("已刪除選取框");
   }
 
-  function changeDocument(nextDocument) {
+  async function uploadDocument(file) {
+    if (!file?.name.toLowerCase().endsWith(".pdf")) {
+      showToast("未選擇任何 PDF");
+      return;
+    }
     if (!confirmDiscard()) return;
-    setDocumentName(nextDocument);
-    setPage(1);
+
+    setUploading(true);
+    try {
+      const response = await fetch(`/api/documents/upload?filename=${encodeURIComponent(file.name)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/pdf" },
+        body: file,
+      });
+      const uploaded = await response.json();
+      if (!response.ok) throw new Error(uploaded.detail || `無法上傳 ${file.name}`);
+      setCurrentDocument(uploaded);
+      setPage(1);
+      showToast("PDF 已載入");
+    } catch (error) {
+      showToast(error.message);
+    } finally {
+      setUploading(false);
+    }
   }
 
   function changePage(nextPage) {
@@ -910,16 +906,18 @@ function App() {
       <aside className="side-panel source-panel">
         <section>
           <SectionHeading step="01" eyebrow="SOURCE" title="圖面來源" />
-          <label className="field-label" htmlFor="document-select">PDF 文件</label>
-          <select
-            id="document-select"
-            value={documentName}
-            disabled={busy || !documents.length}
-            onChange={(event) => changeDocument(event.target.value)}
-          >
-            {!documents.length && <option>正在讀取 test-ED...</option>}
-            {documents.map((document) => <option key={document.name}>{document.name}</option>)}
-          </select>
+          <label className="source-file-button">
+            <input
+              type="file"
+              accept=".pdf,application/pdf"
+              disabled={busy || uploading}
+              onChange={(event) => {
+                uploadDocument(event.target.files[0]);
+                event.target.value = "";
+              }}
+            />
+            {uploading ? "上傳中…" : "選擇 PDF"}
+          </label>
 
           <div className="page-nav">
             <button
@@ -969,7 +967,7 @@ function App() {
                 disabled={busy || !frameGridReady}
                 icon={<SelectIcon />}
                 title="選取／調整"
-                description="選取、移動或調整 box 大小"
+                description="移動、調整 box 大小"
                 shortcut="V"
                 onClick={() => selectTool("select")}
               />
@@ -978,7 +976,7 @@ function App() {
                 disabled={busy || !frameGridReady}
                 icon={<CropIcon />}
                 title="框選裁切區域"
-                description="空白處建立，框可直接調整"
+                description="可直接調整大小"
                 shortcut="C"
                 onClick={() => selectTool("crop")}
               />
@@ -1010,7 +1008,7 @@ function App() {
       <main className="workspace">
         <div className="workspace-bar">
           <div className="document-meta">
-            <strong>{documentName || "NO DOCUMENT"}</strong>
+            <strong>{currentDocument?.name || "NO DOCUMENT"}</strong>
             <span>{imageSize.width ? `${imageSize.width} × ${imageSize.height} PX` : "-- × -- PX"}</span>
           </div>
           {viewMode === "edit" ? (
@@ -1273,7 +1271,7 @@ function App() {
                         resetView();
                       }}
                     >
-                      Canvas 預覽
+                      返回預覽
                     </button>
                     <a className="excel-download" href={excelResult.file} download>
                       下載 Excel

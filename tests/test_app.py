@@ -49,10 +49,6 @@ def test_preview_and_crop_job(tmp_path, monkeypatch):
 
     client = TestClient(app_module.app)
 
-    documents = client.get("/api/documents")
-    assert documents.status_code == 200
-    assert documents.json() == [{"name": "drawing.pdf", "pages": 1}]
-
     preview = client.get("/api/documents/drawing.pdf/pages/1/preview")
     assert preview.status_code == 200
     assert preview.headers["content-type"] == "image/png"
@@ -91,6 +87,60 @@ def test_preview_and_crop_job(tmp_path, monkeypatch):
         }
     ]
     assert (job_dir / "frame_detection" / "frame_detection_results.json").is_file()
+
+
+def test_uploaded_pdf_uses_existing_preview_and_job_flow(tmp_path, monkeypatch):
+    pdf_path = tmp_path / "client drawing.pdf"
+    upload_dir = tmp_path / "uploads"
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    create_test_pdf(pdf_path, pages=2)
+
+    monkeypatch.setattr(app_module, "UPLOAD_DIR", upload_dir)
+    monkeypatch.setattr(app_module, "OUTPUT_DIR", output_dir)
+
+    client = TestClient(app_module.app)
+    uploaded = client.post(
+        "/api/documents/upload",
+        params={"filename": pdf_path.name},
+        content=pdf_path.read_bytes(),
+        headers={"Content-Type": "application/pdf"},
+    )
+
+    assert uploaded.status_code == 200
+    document = uploaded.json()["id"]
+    assert uploaded.json()["name"] == pdf_path.name
+    assert uploaded.json()["pages"] == 2
+    assert (upload_dir / document).is_file()
+
+    preview = client.get(f"/api/documents/{document}/pages/2/preview")
+    assert preview.status_code == 200
+    assert preview.headers["content-type"] == "image/png"
+
+    job = client.post(
+        "/api/jobs",
+        json={
+            "document": document,
+            "page": 2,
+            "load_id": "20260622T120000000Z",
+            "action": "crop",
+            "boxes": [{"id": 1, "x": 10, "y": 12, "width": 30, "height": 24}],
+        },
+    )
+    assert job.status_code == 200
+    assert (output_dir / job.json()["job_id"] / "crop_001.png").is_file()
+
+    replacement_path = tmp_path / "replacement.pdf"
+    create_test_pdf(replacement_path)
+    replacement = client.post(
+        "/api/documents/upload",
+        params={"filename": replacement_path.name},
+        content=replacement_path.read_bytes(),
+        headers={"Content-Type": "application/pdf"},
+    )
+    assert replacement.status_code == 200
+    assert not (upload_dir / document).exists()
+    assert (upload_dir / replacement.json()["id"]).is_file()
 
 
 def test_repeated_crop_updates_same_output_by_box_id(tmp_path, monkeypatch):

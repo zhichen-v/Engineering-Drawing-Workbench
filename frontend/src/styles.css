@@ -36,7 +36,6 @@ body {
 }
 
 button,
-select,
 input {
   color: inherit;
   font: inherit;
@@ -47,7 +46,7 @@ button {
 }
 
 button:disabled,
-select:disabled {
+input:disabled {
   cursor: not-allowed;
   opacity: 0.46;
 }
@@ -195,27 +194,40 @@ select:disabled {
   font-size: 21px;
 }
 
-.field-label {
-  display: block;
-  margin-bottom: 8px;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 800;
-}
-
-select {
-  width: 100%;
-  min-height: 44px;
-  padding: 0 12px;
+.source-file-button {
+  display: grid;
+  place-items: center;
+  min-height: 42px;
+  margin-bottom: 14px;
+  padding: 0 10px;
+  cursor: pointer;
+  color: var(--green-dark);
   border: 1px solid var(--line-strong);
-  outline: none;
   background: white;
-  font-size: 14px;
-  font-weight: 700;
+  font-size: 13px;
+  font-weight: 900;
 }
 
-select:focus {
-  border: 2px solid var(--green);
+.source-file-button:hover {
+  border-color: var(--amber);
+  background: rgba(189, 117, 25, 0.08);
+}
+
+.source-file-button:focus-within {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+
+.source-file-button:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
+.source-file-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
 }
 
 .page-nav {
