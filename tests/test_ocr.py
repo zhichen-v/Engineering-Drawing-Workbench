@@ -161,6 +161,7 @@ def test_clean_gd_value_text_removes_visual_descriptions_and_numeric_frames():
 def test_normalize_ocr_text_reconstructs_unilateral_tolerances():
     cases = {
         "0.05^{+0.1}_{0.0}": "0.05 +0.1 -0.0",
+        "0.5 ^{+ 0.02}_{0}": "0.5 +0.02 -0",
         "0.05 +0.1 _{0.0}": "0.05 +0.1 -0.0",
         "0.05^{+0.1} 0.0": "0.05 +0.1 -0.0",
         "0.05^{+0.1}": "0.05 +0.1 -0",
@@ -234,7 +235,13 @@ def test_run_ocr_reuses_unchanged_box_results_before_loading_models(tmp_path, mo
             {
                 "job_id": "test-job",
                 "ocr_version": OCR_VERSION,
-                "results": [{"crop_number": 1, "box": box, "ocr": "0.01"}],
+                "results": [
+                    {
+                        "crop_number": 1,
+                        "box": box,
+                        "ocr": "0.5 ^{+ 0.02}_{0}",
+                    }
+                ],
             }
         ),
         encoding="utf-8",
@@ -259,7 +266,12 @@ def test_run_ocr_reuses_unchanged_box_results_before_loading_models(tmp_path, mo
 
     result = json.loads(output_path.read_text(encoding="utf-8"))
     assert result["results"] == [
-        {"crop_number": 1, "box": box, "frame_location": "D3", "ocr": "0.01"}
+        {
+            "crop_number": 1,
+            "box": box,
+            "frame_location": "D3",
+            "ocr": "0.5 +0.02 -0",
+        }
     ]
 
 

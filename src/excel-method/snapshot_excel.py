@@ -19,18 +19,27 @@ def snapshot_workbook(
     min_cols=19,
     visible=False,
 ):
+    return snapshot_workbook_sheets(
+        workbook_path,
+        (
+            {
+                "sheet_name": sheet_name,
+                "output_path": output_path,
+                "cell_range": cell_range,
+                "min_rows": min_rows,
+                "min_cols": min_cols,
+            },
+        ),
+        visible=visible,
+    )[sheet_name]
+
+
+def snapshot_workbook_sheets(workbook_path, requests, visible=False):
     workbook_path = Path(workbook_path).resolve()
     if not workbook_path.is_file():
         raise FileNotFoundError(f"Workbook not found: {workbook_path}")
 
     pythoncom, win32com = require_excel_com()
-    output_path = (
-        Path(output_path).resolve()
-        if output_path
-        else default_output_path(workbook_path, sheet_name)
-    )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
     pythoncom.CoInitialize()
     excel = None
     workbook = None
@@ -40,30 +49,43 @@ def snapshot_workbook(
         excel = win32com.client.DispatchEx("Excel.Application")
         excel.Visible = bool(visible)
         excel.DisplayAlerts = False
-        excel.ScreenUpdating = True
+        excel.ScreenUpdating = False
 
         workbook = excel.Workbooks.Open(
             str(workbook_path),
             UpdateLinks=0,
             ReadOnly=True,
         )
-        worksheet = workbook.Worksheets(sheet_name)
-        target = (
-            worksheet.Range(cell_range)
-            if cell_range
-            else auto_range(worksheet, min_rows, min_cols)
-        )
-
-        worksheet.Activate()
-        target.Select()
-        export_range_via_pdf(target, output_path)
-        address = str(target.Address).replace("$", "")
-        return {
-            "workbook": str(workbook_path),
-            "sheet": sheet_name,
-            "range": address,
-            "output": str(output_path),
-        }
+        results = {}
+        for request in requests:
+            sheet_name = request["sheet_name"]
+            output_path = (
+                Path(request["output_path"]).resolve()
+                if request.get("output_path")
+                else default_output_path(workbook_path, sheet_name)
+            )
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            worksheet = workbook.Worksheets(sheet_name)
+            target = (
+                worksheet.Range(request["cell_range"])
+                if request.get("cell_range")
+                else auto_range(
+                    worksheet,
+                    request.get("min_rows", 26),
+                    request.get("min_cols", 19),
+                )
+            )
+            worksheet.Activate()
+            export_range_via_pdf(target, output_path)
+            results[sheet_name] = {
+                "workbook": str(workbook_path),
+                "sheet": sheet_name,
+                "range": str(target.Address).replace("$", ""),
+                "output": str(output_path),
+            }
+            target = None
+            worksheet = None
+        return results
     finally:
         target = None
         worksheet = None
@@ -90,6 +112,10 @@ def auto_range(worksheet, min_rows, min_cols):
 
 def export_range_via_pdf(target, output_path):
     worksheet = target.Worksheet
+    worksheet.PageSetup.PrintArea = target.Address
+    worksheet.PageSetup.Zoom = False
+    worksheet.PageSetup.FitToPagesWide = 1
+    worksheet.PageSetup.FitToPagesTall = 1
 
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temporary:
         pdf_path = Path(temporary.name)

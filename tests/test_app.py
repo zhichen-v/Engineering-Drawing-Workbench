@@ -7,6 +7,14 @@ from PIL import Image
 
 import app as app_module
 
+TEST_SESSION_ID = "a" * 32
+
+
+def create_client():
+    client = TestClient(app_module.app)
+    client.cookies.set(app_module.SESSION_COOKIE, TEST_SESSION_ID)
+    return client
+
 
 def create_test_pdf(path, pages=1, frame_grid=False):
     pdf = fitz.open()
@@ -29,7 +37,7 @@ def create_test_pdf(path, pages=1, frame_grid=False):
 
 
 def test_root_serves_react_build():
-    client = TestClient(app_module.app)
+    client = create_client()
     response = client.get("/")
 
     assert response.status_code == 200
@@ -47,7 +55,7 @@ def test_preview_and_crop_job(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "PDF_DIR", pdf_dir)
     monkeypatch.setattr(app_module, "OUTPUT_DIR", output_dir)
 
-    client = TestClient(app_module.app)
+    client = create_client()
 
     preview = client.get("/api/documents/drawing.pdf/pages/1/preview")
     assert preview.status_code == 200
@@ -65,7 +73,7 @@ def test_preview_and_crop_job(tmp_path, monkeypatch):
     )
     assert response.status_code == 200
 
-    job_dir = output_dir / response.json()["job_id"]
+    job_dir = output_dir / TEST_SESSION_ID / response.json()["job_id"]
     assert (job_dir / "snapshot_page_001.png").is_file()
     assert (job_dir / "crop_001.png").is_file()
     assert (job_dir / "boxes.json").is_file()
@@ -99,7 +107,7 @@ def test_uploaded_pdf_uses_existing_preview_and_job_flow(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "UPLOAD_DIR", upload_dir)
     monkeypatch.setattr(app_module, "OUTPUT_DIR", output_dir)
 
-    client = TestClient(app_module.app)
+    client = create_client()
     uploaded = client.post(
         "/api/documents/upload",
         params={"filename": pdf_path.name},
@@ -111,7 +119,8 @@ def test_uploaded_pdf_uses_existing_preview_and_job_flow(tmp_path, monkeypatch):
     document = uploaded.json()["id"]
     assert uploaded.json()["name"] == pdf_path.name
     assert uploaded.json()["pages"] == 2
-    assert (upload_dir / document).is_file()
+    session_upload_dir = upload_dir / client.cookies.get(app_module.SESSION_COOKIE)
+    assert (session_upload_dir / document).is_file()
 
     preview = client.get(f"/api/documents/{document}/pages/2/preview")
     assert preview.status_code == 200
@@ -128,7 +137,9 @@ def test_uploaded_pdf_uses_existing_preview_and_job_flow(tmp_path, monkeypatch):
         },
     )
     assert job.status_code == 200
-    assert (output_dir / job.json()["job_id"] / "crop_001.png").is_file()
+    assert (
+        output_dir / TEST_SESSION_ID / job.json()["job_id"] / "crop_001.png"
+    ).is_file()
 
     replacement_path = tmp_path / "replacement.pdf"
     create_test_pdf(replacement_path)
@@ -139,8 +150,49 @@ def test_uploaded_pdf_uses_existing_preview_and_job_flow(tmp_path, monkeypatch):
         headers={"Content-Type": "application/pdf"},
     )
     assert replacement.status_code == 200
-    assert not (upload_dir / document).exists()
-    assert (upload_dir / replacement.json()["id"]).is_file()
+    assert not (session_upload_dir / document).exists()
+    assert (session_upload_dir / replacement.json()["id"]).is_file()
+
+
+def test_uploaded_pdfs_are_isolated_by_browser_session(tmp_path, monkeypatch):
+    first_pdf = tmp_path / "first.pdf"
+    second_pdf = tmp_path / "second.pdf"
+    upload_dir = tmp_path / "uploads"
+    output_dir = tmp_path / "output"
+    create_test_pdf(first_pdf)
+    create_test_pdf(second_pdf)
+    monkeypatch.setattr(app_module, "UPLOAD_DIR", upload_dir)
+    monkeypatch.setattr(app_module, "OUTPUT_DIR", output_dir)
+
+    first_client = TestClient(app_module.app)
+    second_client = TestClient(app_module.app)
+    first = first_client.post(
+        "/api/documents/upload",
+        params={"filename": first_pdf.name},
+        content=first_pdf.read_bytes(),
+        headers={"Content-Type": "application/pdf"},
+    )
+    second = second_client.post(
+        "/api/documents/upload",
+        params={"filename": second_pdf.name},
+        content=second_pdf.read_bytes(),
+        headers={"Content-Type": "application/pdf"},
+    )
+
+    first_session = first_client.cookies.get(app_module.SESSION_COOKIE)
+    second_session = second_client.cookies.get(app_module.SESSION_COOKIE)
+    assert first_session != second_session
+    assert (upload_dir / first_session / first.json()["id"]).is_file()
+    assert (upload_dir / second_session / second.json()["id"]).is_file()
+    assert first_client.get(
+        f"/api/documents/{second.json()['id']}/pages/1/preview"
+    ).status_code == 404
+
+    first_output = output_dir / first_session / "job" / "result.txt"
+    first_output.parent.mkdir(parents=True)
+    first_output.write_text("first", encoding="utf-8")
+    assert first_client.get("/output/job/result.txt").text == "first"
+    assert second_client.get("/output/job/result.txt").status_code == 404
 
 
 def test_repeated_crop_updates_same_output_by_box_id(tmp_path, monkeypatch):
@@ -153,7 +205,7 @@ def test_repeated_crop_updates_same_output_by_box_id(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "PDF_DIR", pdf_dir)
     monkeypatch.setattr(app_module, "OUTPUT_DIR", output_dir)
 
-    client = TestClient(app_module.app)
+    client = create_client()
     first = client.post(
         "/api/jobs",
         json={
@@ -193,9 +245,10 @@ def test_repeated_crop_updates_same_output_by_box_id(tmp_path, monkeypatch):
     assert saved.status_code == 200
     assert second.json()["job_id"] == first.json()["job_id"]
     assert saved.json()["job_id"] == first.json()["job_id"]
-    assert len(list(output_dir.iterdir())) == 1
+    session_output_dir = output_dir / TEST_SESSION_ID
+    assert len(list(session_output_dir.iterdir())) == 1
 
-    job_dir = output_dir / second.json()["job_id"]
+    job_dir = session_output_dir / second.json()["job_id"]
     assert not (job_dir / "crop_001.png").exists()
     assert (job_dir / "crop_002.png").is_file()
 
@@ -226,7 +279,7 @@ def test_pages_share_one_output_and_global_crop_numbers(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "PDF_DIR", pdf_dir)
     monkeypatch.setattr(app_module, "OUTPUT_DIR", output_dir)
 
-    response = TestClient(app_module.app).post(
+    response = create_client().post(
         "/api/jobs",
         json={
             "document": "drawing.pdf",
@@ -242,7 +295,7 @@ def test_pages_share_one_output_and_global_crop_numbers(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     assert "_page_" not in response.json()["job_id"]
-    job_dir = output_dir / response.json()["job_id"]
+    job_dir = output_dir / TEST_SESSION_ID / response.json()["job_id"]
     assert (job_dir / "snapshot_page_001.png").is_file()
     assert (job_dir / "snapshot_page_002.png").is_file()
     assert (job_dir / "crop_001.png").is_file()
@@ -263,7 +316,7 @@ def test_crop_job_writes_frame_detection_and_frame_location(tmp_path, monkeypatc
     monkeypatch.setattr(app_module, "PDF_DIR", pdf_dir)
     monkeypatch.setattr(app_module, "OUTPUT_DIR", output_dir)
 
-    response = TestClient(app_module.app).post(
+    response = create_client().post(
         "/api/jobs",
         json={
             "document": "drawing.pdf",
@@ -275,7 +328,7 @@ def test_crop_job_writes_frame_detection_and_frame_location(tmp_path, monkeypatc
     )
 
     assert response.status_code == 200
-    job_dir = output_dir / response.json()["job_id"]
+    job_dir = output_dir / TEST_SESSION_ID / response.json()["job_id"]
     frame_result_path = job_dir / "frame_detection" / "frame_detection_results.json"
     assert frame_result_path.is_file()
 
@@ -296,7 +349,7 @@ def test_frame_detection_endpoint_writes_overlay_for_frontend(tmp_path, monkeypa
     monkeypatch.setattr(app_module, "PDF_DIR", pdf_dir)
     monkeypatch.setattr(app_module, "OUTPUT_DIR", output_dir)
 
-    client = TestClient(app_module.app)
+    client = create_client()
     response = client.post(
         "/api/frame-detection",
         json={
@@ -308,7 +361,7 @@ def test_frame_detection_endpoint_writes_overlay_for_frontend(tmp_path, monkeypa
 
     assert response.status_code == 200
     payload = response.json()
-    job_dir = output_dir / payload["job_id"]
+    job_dir = output_dir / TEST_SESSION_ID / payload["job_id"]
     assert payload["output_dir"] == f"output/{payload['job_id']}"
     assert payload["file"] == f"/output/{payload['job_id']}/frame_detection/frame_detection_results.json"
     assert sorted(payload["overlays"]) == ["1", "2", "3"]
@@ -352,7 +405,7 @@ def test_different_loads_create_separate_time_ordered_outputs(tmp_path, monkeypa
     monkeypatch.setattr(app_module, "PDF_DIR", pdf_dir)
     monkeypatch.setattr(app_module, "OUTPUT_DIR", output_dir)
 
-    client = TestClient(app_module.app)
+    client = create_client()
     payload = {
         "document": "drawing.pdf",
         "page": 1,
@@ -365,14 +418,14 @@ def test_different_loads_create_separate_time_ordered_outputs(tmp_path, monkeypa
     assert first.status_code == 200
     assert second.status_code == 200
     assert first.json()["job_id"] != second.json()["job_id"]
-    assert sorted(path.name for path in output_dir.iterdir()) == [
+    assert sorted(path.name for path in (output_dir / TEST_SESSION_ID).iterdir()) == [
         first.json()["job_id"],
         second.json()["job_id"],
     ]
 
 
 def test_crop_requires_a_box():
-    client = TestClient(app_module.app)
+    client = create_client()
     response = client.post(
         "/api/jobs",
         json={
@@ -388,7 +441,7 @@ def test_crop_requires_a_box():
 
 def test_recognize_job_returns_ocr_results(tmp_path, monkeypatch):
     output_dir = tmp_path / "output"
-    job_dir = output_dir / "20260615T120000000Z_drawing"
+    job_dir = output_dir / TEST_SESSION_ID / "20260615T120000000Z_drawing"
     job_dir.mkdir(parents=True)
 
     def fake_run_ocr_job(target):
@@ -422,7 +475,7 @@ def test_recognize_job_returns_ocr_results(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "OUTPUT_DIR", output_dir)
     monkeypatch.setattr(app_module, "run_ocr_job", fake_run_ocr_job)
 
-    response = TestClient(app_module.app).post(f"/api/jobs/{job_dir.name}/ocr")
+    response = create_client().post(f"/api/jobs/{job_dir.name}/ocr")
 
     assert response.status_code == 200
     assert response.json()["results"][0]["ocr"] == "⌀ 0.5"
@@ -431,7 +484,7 @@ def test_recognize_job_returns_ocr_results(tmp_path, monkeypatch):
 
 def test_ocr_task_reports_progress_and_result(tmp_path, monkeypatch):
     output_dir = tmp_path / "output"
-    job_dir = output_dir / "20260615T120000000Z_drawing"
+    job_dir = output_dir / TEST_SESSION_ID / "20260615T120000000Z_drawing"
     job_dir.mkdir(parents=True)
 
     def fake_run_ocr_job(target, progress_callback=None):
@@ -455,7 +508,7 @@ def test_ocr_task_reports_progress_and_result(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "OUTPUT_DIR", output_dir)
     monkeypatch.setattr(app_module, "run_ocr_job", fake_run_ocr_job)
 
-    client = TestClient(app_module.app)
+    client = create_client()
     response = client.post(f"/api/jobs/{job_dir.name}/ocr/tasks")
 
     assert response.status_code == 202
@@ -473,14 +526,14 @@ def test_ocr_task_reports_progress_and_result(tmp_path, monkeypatch):
 def test_recognize_job_requires_existing_job(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "OUTPUT_DIR", tmp_path / "output")
 
-    response = TestClient(app_module.app).post("/api/jobs/missing/ocr")
+    response = create_client().post("/api/jobs/missing/ocr")
 
     assert response.status_code == 404
 
 
 def test_export_job_excel_returns_preview_and_download_urls(tmp_path, monkeypatch):
     output_dir = tmp_path / "output"
-    job_dir = output_dir / "20260615T120000000Z_drawing"
+    job_dir = output_dir / TEST_SESSION_ID / "20260615T120000000Z_drawing"
     job_dir.mkdir(parents=True)
     (job_dir / "ocr_results.json").write_text('{"results": []}', encoding="utf-8")
 
@@ -492,7 +545,7 @@ def test_export_job_excel_returns_preview_and_download_urls(tmp_path, monkeypatc
     monkeypatch.setattr(app_module, "OUTPUT_DIR", output_dir)
     monkeypatch.setattr(app_module, "run_excel_job", fake_run_excel_job)
 
-    response = TestClient(app_module.app).post(
+    response = create_client().post(
         f"/api/jobs/{job_dir.name}/excel",
         json={"format": "MIP"},
     )
@@ -514,11 +567,11 @@ def test_export_job_excel_returns_preview_and_download_urls(tmp_path, monkeypatc
 
 def test_export_job_excel_requires_ocr_results(tmp_path, monkeypatch):
     output_dir = tmp_path / "output"
-    job_dir = output_dir / "20260615T120000000Z_drawing"
+    job_dir = output_dir / TEST_SESSION_ID / "20260615T120000000Z_drawing"
     job_dir.mkdir(parents=True)
     monkeypatch.setattr(app_module, "OUTPUT_DIR", output_dir)
 
-    response = TestClient(app_module.app).post(
+    response = create_client().post(
         f"/api/jobs/{job_dir.name}/excel",
         json={"format": "QC"},
     )

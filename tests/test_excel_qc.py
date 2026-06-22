@@ -69,20 +69,28 @@ def test_qc_unspecified_tolerance_uses_mip_profile():
 
 
 def test_angle_uses_profile_for_mip_and_qc():
-    data = {
-        "results": [
-            {
-                "crop_number": 1,
-                "box": {"page": 1, "frame_location": "A1"},
-                "ocr": "45°",
-            }
-        ]
-    }
+    for text in ("45°", "4X 1 ±0.05 x 4 5°"):
+        data = {
+            "results": [
+                {
+                    "crop_number": 1,
+                    "box": {"page": 1, "frame_location": "A1"},
+                    "ocr": text,
+                }
+            ]
+        }
 
-    _, mip_rows = OCR_PARSER.build_mip_rows(data, ROOT, PROFILE, "metric")
-    _, qc_rows = OCR_PARSER.build_qc_rows(data, ROOT, PROFILE, "metric")
+        _, mip_rows = OCR_PARSER.build_mip_rows(data, ROOT, PROFILE, "metric")
+        _, qc_rows = OCR_PARSER.build_qc_rows(data, ROOT, PROFILE, "metric")
 
-    assert mip_rows[0]["excel_tolerance"] == "±0.5°"
-    assert mip_rows[0]["control_tolerance"] == "±0.4°"
-    assert qc_rows[0]["tolerance_plus"] == "+0.5°"
-    assert qc_rows[0]["tolerance_minus"] == "-0.5°"
+        assert mip_rows[0]["excel_tolerance"] == "±0.5°"
+        assert mip_rows[0]["control_tolerance"] == "±0.4°"
+        assert qc_rows[0]["tolerance_plus"] == "+0.5°"
+        assert qc_rows[0]["tolerance_minus"] == "-0.5°"
+
+
+def test_explicit_angle_tolerance_still_takes_priority():
+    row = qc_row("45° ±1°")
+
+    assert row["tolerance_plus"] == "+1°"
+    assert row["tolerance_minus"] == "-1°"

@@ -203,6 +203,7 @@ function CropOverlay({
   selectedId,
   onBoxPointerDown,
   onPointerDown,
+  onPointerLost,
   onPointerMove,
   onPointerUp,
   overlayRef,
@@ -222,7 +223,8 @@ function CropOverlay({
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
+      onPointerCancel={onPointerLost}
+      onLostPointerCapture={onPointerLost}
     >
       {boxes.map((box) => {
         const isSelected = box.id === selectedId;
@@ -370,7 +372,7 @@ function App() {
   const [viewMode, setViewMode] = useState("edit");
   const [recognitionVisible, setRecognitionVisible] = useState(true);
   const [excelFormat, setExcelFormat] = useState("MIP");
-  const [excelResult, setExcelResult] = useState(null);
+  const [excelResults, setExcelResults] = useState({});
   const [excelPreviewIndex, setExcelPreviewIndex] = useState(0);
   const [excelGenerating, setExcelGenerating] = useState(false);
   const [toast, setToast] = useState("");
@@ -401,6 +403,7 @@ function App() {
   const frameGridReady = framePageIsReady(currentFramePage);
   const frameOverlayUrl = frameDetection?.overlays?.[String(page)] || "";
   const selectedFrameLocation = locateFrameCell(currentFramePage, selectedBox);
+  const excelResult = excelResults[excelFormat] || null;
   const currentExcelPreview = excelResult?.previews?.[excelPreviewIndex] || null;
   const ocrProgressText = ocrProgress.total
     ? `${Math.min(ocrProgress.current, ocrProgress.total)} / ${ocrProgress.total}`
@@ -492,7 +495,7 @@ function App() {
     setFrameLayerVisible(true);
     setViewMode("edit");
     setRecognitionVisible(true);
-    setExcelResult(null);
+    setExcelResults({});
     setExcelPreviewIndex(0);
     setExcelGenerating(false);
     resetBoxes();
@@ -629,6 +632,11 @@ function App() {
         setSelectedId(id);
       }
     }
+    setInteraction(null);
+  }
+
+  function handlePointerLost() {
+    setDraft(null);
     setInteraction(null);
   }
 
@@ -805,7 +813,7 @@ function App() {
     setBusy(true);
     setRecognizing(true);
     setRecognitionComplete(false);
-    setExcelResult(null);
+    setExcelResults({});
     setOcrStage("model_loading");
     setOcrProgress({ current: 0, total: documentBoxes.length, reused: 0, crop: "" });
     setJobResult(null);
@@ -854,14 +862,29 @@ function App() {
 
   function changeExcelFormat(format) {
     setExcelFormat(format);
-    setExcelResult(null);
     setExcelPreviewIndex(0);
-    if (viewMode === "excel") returnToRecognition();
+    if (excelResults[format]) {
+      setViewMode("excel");
+      setLoading(true);
+      resetView();
+      showToast(`${format} Excel 預覽已載入`);
+    } else if (viewMode === "excel") {
+      returnToRecognition();
+    }
   }
 
   async function submitExcel() {
     if (!recognitionComplete || !ocrResult || !savedJobId) {
       showToast("請先完成 OCR 辨識");
+      return;
+    }
+
+    if (excelResult) {
+      setExcelPreviewIndex(0);
+      setViewMode("excel");
+      setLoading(true);
+      resetView();
+      showToast(`${excelFormat} Excel 預覽已載入`);
       return;
     }
 
@@ -876,7 +899,10 @@ function App() {
       const result = await response.json();
       if (!response.ok) throw new Error(result.detail || "Excel 輸出失敗");
 
-      setExcelResult({ ...result, revision: Date.now() });
+      setExcelResults((current) => ({
+        ...current,
+        [excelFormat]: { ...result, revision: Date.now() },
+      }));
       setExcelPreviewIndex(0);
       setViewMode("excel");
       setLoading(true);
@@ -1158,6 +1184,7 @@ function App() {
                   selectedId={selectedId}
                   onBoxPointerDown={handleBoxPointerDown}
                   onPointerDown={handleOverlayPointerDown}
+                  onPointerLost={handlePointerLost}
                   onPointerMove={handlePointerMove}
                   onPointerUp={handlePointerUp}
                   overlayRef={overlayRef}
@@ -1254,7 +1281,13 @@ function App() {
                 disabled={busy}
                 onClick={submitExcel}
               >
-                <span>{excelGenerating ? "產生 Excel 中" : `產生 ${excelFormat} Excel`}</span>
+                <span>
+                  {excelGenerating
+                    ? "產生 Excel 中"
+                    : excelResult
+                      ? `查看 ${excelFormat} 預覽`
+                      : `產生 ${excelFormat} Excel`}
+                </span>
                 <span aria-hidden="true">→</span>
               </button>
               {excelResult && (

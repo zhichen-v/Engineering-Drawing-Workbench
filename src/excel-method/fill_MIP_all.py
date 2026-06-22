@@ -7,7 +7,7 @@ from pathlib import Path
 from excel_writer import fill_workbook_template
 from ocr_parser import build_mip_rows, load_json
 from sheet_layouts import FILL_LAYOUTS
-from snapshot_excel import snapshot_workbook
+from snapshot_excel import snapshot_workbook_sheets
 
 
 IGNORED_SHEETS = ("檢驗表修改紀錄",)
@@ -48,16 +48,18 @@ def run(job_dir, template_path, tolerance_profile_path, output_dir, unit):
         excel_path,
     )
 
-    snapshots = {}
-    for layout in FILL_LAYOUTS:
-        snapshot_path = output_dir / f"{layout.sheet_name}_snapshot.png"
-        snapshots[layout.sheet_name] = snapshot_workbook(
-            excel_path,
-            output_path=snapshot_path,
-            sheet_name=layout.sheet_name,
-            min_rows=layout.data_start_row + len(output_rows) + 4,
-            min_cols=layout.last_column,
-        )
+    snapshots = snapshot_workbook_sheets(
+        excel_path,
+        (
+            {
+                "sheet_name": layout.sheet_name,
+                "output_path": output_dir / f"{layout.sheet_name}_snapshot.png",
+                "min_rows": layout.data_start_row + len(output_rows) + 4,
+                "min_cols": layout.last_column,
+            }
+            for layout in FILL_LAYOUTS
+        ),
+    )
 
     debug = {
         "metadata": {

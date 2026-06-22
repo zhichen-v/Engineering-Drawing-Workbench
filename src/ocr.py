@@ -179,6 +179,7 @@ def run_ocr(
             results_by_number[crop_number] = {
                 **previous,
                 "frame_location": boxes[crop_number].get("frame_location"),
+                "ocr": normalize_ocr_text(previous.get("ocr", "")),
             }
         else:
             pending.append((crop_number, path))

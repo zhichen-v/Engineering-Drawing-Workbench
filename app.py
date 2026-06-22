@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 from copy import deepcopy
+from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
@@ -30,6 +31,8 @@ OUTPUT_DIR = BASE_DIR / "output"
 STATIC_DIR = BASE_DIR / "static"
 PREVIEW_SCALE = 2.0
 MAX_UPLOAD_BYTES = 250 * 1024 * 1024
+SESSION_COOKIE = "ed_session"
+CURRENT_SESSION_ID: ContextVar[str] = ContextVar("current_session_id", default="")
 OCR_TASKS: dict[str, dict[str, Any]] = {}
 OCR_TASK_LOCK = Lock()
 
@@ -37,7 +40,23 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 
 app = FastAPI(title="ED Crop Workbench")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-app.mount("/output", StaticFiles(directory=OUTPUT_DIR), name="output")
+
+
+@app.middleware("http")
+async def browser_session(request: Request, call_next):
+    session_id = request.cookies.get(SESSION_COOKIE, "")
+    if len(session_id) != 32 or any(character not in "0123456789abcdef" for character in session_id):
+        session_id = uuid4().hex
+
+    token = CURRENT_SESSION_ID.set(session_id)
+    try:
+        response = await call_next(request)
+    finally:
+        CURRENT_SESSION_ID.reset(token)
+
+    if request.cookies.get(SESSION_COOKIE) != session_id:
+        response.set_cookie(SESSION_COOKIE, session_id, httponly=True, samesite="lax")
+    return response
 
 
 class Box(BaseModel):
@@ -75,14 +94,18 @@ def build_job_path(document: str, load_id: str) -> tuple[str, Path]:
     ).strip("_") or "document"
     document_hash = hashlib.sha256(document.encode("utf-8")).hexdigest()[:8]
     job_id = f"{load_id}_{safe_document_stem}_{document_hash}"
-    return job_id, OUTPUT_DIR / job_id
+    return job_id, OUTPUT_DIR / CURRENT_SESSION_ID.get() / job_id
 
 
 def get_pdf_path(document: str) -> Path:
     if Path(document).name != document:
         raise HTTPException(status_code=400, detail="Invalid document name")
 
-    path = (UPLOAD_DIR if document.startswith("upload-") else PDF_DIR) / document
+    path = (
+        UPLOAD_DIR / CURRENT_SESSION_ID.get()
+        if document.startswith("upload-")
+        else PDF_DIR
+    ) / document
     if path.suffix.lower() != ".pdf" or not path.is_file():
         raise HTTPException(status_code=404, detail="PDF not found")
     return path
@@ -101,7 +124,7 @@ def get_job_dir(job_id: str) -> Path:
     if Path(job_id).name != job_id:
         raise HTTPException(status_code=400, detail="Invalid job ID")
 
-    job_dir = OUTPUT_DIR / job_id
+    job_dir = OUTPUT_DIR / CURRENT_SESSION_ID.get() / job_id
     if not job_dir.is_dir():
         raise HTTPException(status_code=404, detail="Job not found")
     return job_dir
@@ -214,6 +237,18 @@ def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/output/{file_path:path}")
+def output_file(file_path: str) -> FileResponse:
+    relative_path = Path(file_path)
+    if relative_path.is_absolute() or ".." in relative_path.parts:
+        raise HTTPException(status_code=400, detail="Invalid output path")
+
+    path = OUTPUT_DIR / CURRENT_SESSION_ID.get() / relative_path
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Output file not found")
+    return FileResponse(path)
+
+
 @app.post("/api/documents/upload")
 async def upload_document(
     request: Request,
@@ -222,9 +257,10 @@ async def upload_document(
     if Path(filename).name != filename or Path(filename).suffix.lower() != ".pdf":
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
 
-    UPLOAD_DIR.mkdir(exist_ok=True)
+    session_upload_dir = UPLOAD_DIR / CURRENT_SESSION_ID.get()
+    session_upload_dir.mkdir(parents=True, exist_ok=True)
     document = f"upload-{uuid4().hex}.pdf"
-    path = UPLOAD_DIR / document
+    path = session_upload_dir / document
     size = 0
     try:
         with path.open("wb") as target:
@@ -246,8 +282,8 @@ async def upload_document(
         path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail="Invalid PDF file") from error
 
-    # ponytail: one global upload; use per-user storage if concurrent users are added.
-    for old_upload in UPLOAD_DIR.glob("upload-*.pdf"):
+    # ponytail: one PDF per browser session; add expiry cleanup when retention is defined.
+    for old_upload in session_upload_dir.glob("upload-*.pdf"):
         if old_upload != path:
             old_upload.unlink()
     return {"id": document, "name": filename, "pages": pages, "source": "upload"}
@@ -266,7 +302,7 @@ def preview_page(
 def detect_frame(request: FrameDetectionRequest) -> dict[str, object]:
     pdf_path = get_pdf_path(request.document)
     job_id, job_dir = build_job_path(request.document, request.load_id)
-    job_dir.mkdir(exist_ok=True)
+    job_dir.mkdir(parents=True, exist_ok=True)
 
     with fitz.open(pdf_path) as pdf:
         if request.page < 1 or request.page > len(pdf):
@@ -316,7 +352,7 @@ def create_job(request: JobRequest) -> dict[str, object]:
 
     pdf_path = get_pdf_path(request.document)
     job_id, job_dir = build_job_path(request.document, request.load_id)
-    job_dir.mkdir(exist_ok=True)
+    job_dir.mkdir(parents=True, exist_ok=True)
 
     if request.action == "crop":
         for crop_path in job_dir.glob("crop_*.png"):

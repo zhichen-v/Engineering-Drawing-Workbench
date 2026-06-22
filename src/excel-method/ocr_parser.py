@@ -81,7 +81,12 @@ def parse_ocr_result(result, job_dir, tolerance_profile, unit):
         kind = "linear"
         specification, explicit_tolerance = split_linear_tolerance(raw_text)
         nominal_token = first_dimension_number(specification)
-        if explicit_tolerance:
+        is_angle = re.search(
+            r"\^\{\\circ\}|°|\bDEG(?:REE)?S?\b",
+            specification,
+            re.IGNORECASE,
+        )
+        if explicit_tolerance and (not is_angle or "°" in explicit_tolerance):
             tolerance = explicit_tolerance
             tolerance_source = "explicit_ocr"
         else:
@@ -287,13 +292,16 @@ def normalize_text(text):
 
 
 def split_linear_tolerance(text):
-    bilateral = re.search(rf"±\s*(?P<value>{NUMBER_PATTERN})", text)
+    bilateral = re.search(
+        rf"±\s*(?P<value>{NUMBER_PATTERN})(?P<unit>°?)",
+        text,
+    )
     if bilateral:
         value = bilateral.group("value")
         specification = clean_specification(
             f"{text[:bilateral.start()]} {text[bilateral.end():]}"
         )
-        return specification, f"±{value}"
+        return specification, f"±{value}{bilateral.group('unit')}"
 
     paired = re.search(
         rf"(?P<first_sign>[+-])\s*(?P<first>{NUMBER_PATTERN})"

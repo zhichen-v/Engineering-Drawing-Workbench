@@ -348,7 +348,9 @@ def normalize_ocr_text(text: str) -> str:
     text = re.sub(r"\$?\s*\\pm\s*", "±", text)
     text = text.replace("$", "")
     text = re.sub(r"(\d)\.\s*(\d)\s+(\d)\b", r"\1.\2\3", text)
-    text = normalize_unilateral_tolerance(" ".join(text.split()))
+    text = " ".join(text.split())
+    text = re.sub(r"([+-])\s+(?=\d|\.)", r"\1", text)
+    text = normalize_unilateral_tolerance(text)
     return flatten_unilateral_tolerance(text)
 
 

@@ -680,7 +680,6 @@ kbd {
 
 .box-label {
   fill: var(--box-color);
-  pointer-events: none;
   shape-rendering: geometricPrecision;
   user-select: none;
 }
