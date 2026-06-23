@@ -250,6 +250,20 @@ def _without_attached_zero(value: str) -> str | None:
 def normalize_unilateral_tolerance(text: str) -> str:
     nominal = OCR_NUMBER_PATTERN
     tolerance = OCR_TOLERANCE_PATTERN
+    detached_upper_sign = re.fullmatch(
+        rf"(?P<nominal>{nominal})\s*\^\s*\{{\s*\+\s*\}}"
+        rf"\s*(?P<upper>{nominal})\s+(?P<lower>{tolerance})",
+        text,
+    )
+    if detached_upper_sign:
+        normalized = _format_unilateral_tolerance(
+            detached_upper_sign.group("nominal"),
+            f"+{detached_upper_sign.group('upper')}",
+            detached_upper_sign.group("lower"),
+        )
+        if normalized:
+            return normalized
+
     pair_patterns = (
         rf"^(?P<nominal>{nominal})\s*\^\s*\{{\s*(?P<upper>{tolerance})\s*\}}"
         rf"\s*_\s*\{{\s*(?P<lower>{tolerance})\s*\}}$",
