@@ -267,6 +267,8 @@ def normalize_unilateral_tolerance(text: str) -> str:
     pair_patterns = (
         rf"^(?P<nominal>{nominal})\s*\^\s*\{{\s*(?P<upper>{tolerance})\s*\}}"
         rf"\s*_\s*\{{\s*(?P<lower>{tolerance})\s*\}}$",
+        rf"^(?P<nominal>{nominal})\s*_\s*\{{\s*(?P<lower>{tolerance})\s*\}}"
+        rf"\s*\^\s*\{{\s*(?P<upper>{tolerance})\s*\}}$",
         rf"^(?P<nominal>{nominal})\s*(?P<upper>{tolerance})"
         rf"\s*_\s*\{{\s*(?P<lower>{tolerance})\s*\}}$",
         rf"^(?P<nominal>{nominal})\s*\^\s*\{{\s*(?P<upper>{tolerance})\s*\}}"
@@ -347,9 +349,9 @@ def flatten_unilateral_tolerance(text: str) -> str:
 def normalize_ocr_text(text: str) -> str:
     text = re.sub(
         r"(?:"
-        r"\$\s*[\\/](?:varnothing|diameter|oslash|phi)\s*\$"
-        r"|\{\s*[\\/](?:varnothing|diameter|oslash|phi)\s*\}"
-        r"|[\\/](?:varnothing|diameter|oslash|phi)"
+        r"\$\s*[\\/](?:varnothing|diameter|oslash|phi|bigcirc)\s*\$"
+        r"|\{\s*[\\/](?:varnothing|diameter|oslash|phi|bigcirc)\s*\}"
+        r"|[\\/](?:varnothing|diameter|oslash|phi|bigcirc)"
         r")",
         "⌀",
         text,
