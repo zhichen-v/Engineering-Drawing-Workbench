@@ -1,9 +1,10 @@
+import io
 import json
 from pathlib import Path
 
 import fitz
 from fastapi.testclient import TestClient
-from PIL import Image
+from PIL import Image, ImageDraw
 
 import app as app_module
 
@@ -32,6 +33,26 @@ def create_test_pdf(path, pages=1, frame_grid=False):
                 page.insert_text((4, y), label)
                 page.insert_text((390, y), label)
             page.draw_rect(fitz.Rect(15, 15, 385, 285))
+    pdf.save(path)
+    pdf.close()
+
+
+def create_scanned_frame_grid_pdf(path):
+    image = Image.new("RGB", (400, 300), "white")
+    draw = ImageDraw.Draw(image)
+    boundaries_x = [10, 105, 200, 295, 390]
+    boundaries_y = [10, 80, 150, 220, 290]
+    for x in boundaries_x:
+        draw.line((x, 10, x, 290), fill="black", width=2)
+    for y in boundaries_y:
+        draw.line((10, y, 390, y), fill="black", width=2)
+
+    png = io.BytesIO()
+    image.save(png, format="PNG")
+
+    pdf = fitz.open()
+    page = pdf.new_page(width=400, height=300)
+    page.insert_image(fitz.Rect(0, 0, 400, 300), stream=png.getvalue())
     pdf.save(path)
     pdf.close()
 
@@ -337,6 +358,43 @@ def test_crop_job_writes_frame_detection_and_frame_location(tmp_path, monkeypatc
 
     frame_result = json.loads(frame_result_path.read_text(encoding="utf-8"))
     assert frame_result["pages"][0]["source"] == "pdf_text"
+
+
+def test_scanned_frame_grid_falls_back_to_image_lines(tmp_path, monkeypatch):
+    pdf_dir = tmp_path / "test-ED"
+    output_dir = tmp_path / "output"
+    pdf_dir.mkdir()
+    output_dir.mkdir()
+    create_scanned_frame_grid_pdf(pdf_dir / "scanned.pdf")
+
+    monkeypatch.setattr(app_module, "PDF_DIR", pdf_dir)
+    monkeypatch.setattr(app_module, "OUTPUT_DIR", output_dir)
+
+    response = create_client().post(
+        "/api/jobs",
+        json={
+            "document": "scanned.pdf",
+            "page": 1,
+            "load_id": "20260625T120000000Z",
+            "action": "crop",
+            "boxes": [{"id": 1, "x": 500, "y": 450, "width": 40, "height": 30}],
+        },
+    )
+
+    assert response.status_code == 200
+    job_dir = output_dir / TEST_SESSION_ID / response.json()["job_id"]
+    metadata = json.loads((job_dir / "boxes.json").read_text(encoding="utf-8"))
+    assert metadata["boxes"][0]["frame_location"] == "A2"
+
+    frame_result = json.loads(
+        (job_dir / "frame_detection" / "frame_detection_results.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    page = frame_result["pages"][0]
+    assert page["source"] == "image_grid"
+    assert len(page["columns"]) == 4
+    assert len(page["rows"]) == 4
 
 
 def test_frame_detection_endpoint_writes_overlay_for_frontend(tmp_path, monkeypatch):

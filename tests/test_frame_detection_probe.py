@@ -67,6 +67,36 @@ def test_box_location_uses_center_point():
     assert frame_detection.locate_box(grid, box) == "B2"
 
 
+def test_axis_labels_keep_complete_single_side_sequence():
+    candidates = []
+    for label, x in zip(("6", "5", "4", "3", "2", "1"), (300, 840, 1400, 1960, 2520, 3060)):
+        candidates.append(
+            {
+                "label": label,
+                "kind": "number",
+                "side": "top",
+                "edge_distance": 20,
+                "center": [x, 20],
+                "bbox": [x - 10, 0, x + 10, 40],
+            }
+        )
+    for label, x in zip(("6", "5", "4", "3", "2"), (300, 840, 1400, 1960, 2520)):
+        candidates.append(
+            {
+                "label": label,
+                "kind": "number",
+                "side": "bottom",
+                "edge_distance": 20,
+                "center": [x, 2300],
+                "bbox": [x - 10, 2280, x + 10, 2320],
+            }
+        )
+
+    labels = frame_detection.aggregate_axis_labels(candidates, ("top", "bottom"), 0)
+
+    assert [label.label for label in labels] == ["6", "5", "4", "3", "2", "1"]
+
+
 def test_image_frame_fallback_keeps_probe_useful_without_pdf_text_labels(tmp_path):
     pdf_path = tmp_path / "frame.pdf"
     create_test_pdf(pdf_path, frame_grid=False)

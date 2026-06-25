@@ -140,6 +140,9 @@ def aggregate_axis_labels(
 
     if has_collapsed_centers(best_labels):
         return best_single_side_axis(axis_candidates, sides, coordinate_index)
+    single_side_labels = best_single_side_axis(axis_candidates, sides, coordinate_index)
+    if sequence_score(single_side_labels) > sequence_score(best_labels):
+        return single_side_labels
     return best_labels
 
 
@@ -282,6 +285,131 @@ def detect_image_frame_bbox(image: Image.Image) -> list[int] | None:
     return [int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())]
 
 
+def projection_line_positions(projection: np.ndarray, threshold: int) -> list[int]:
+    indexes = np.where(projection >= threshold)[0]
+    if not len(indexes):
+        return []
+
+    positions = []
+    start = previous = int(indexes[0])
+    for index in indexes[1:]:
+        index = int(index)
+        if index <= previous + 2:
+            previous = index
+            continue
+        positions.append((start + previous) // 2)
+        start = previous = index
+    positions.append((start + previous) // 2)
+    return positions
+
+
+def regular_boundaries(
+    candidates: list[int],
+    start: int,
+    end: int,
+    max_cells: int = 12,
+) -> list[int]:
+    span = end - start
+    if span <= 0:
+        return []
+
+    candidates = sorted(set([start, end, *candidates]))
+    best: tuple[int, float, list[int]] | None = None
+    for cells in range(2, max_cells + 1):
+        spacing = span / cells
+        if spacing < 40:
+            continue
+        tolerance = max(8, spacing * 0.18)
+        matched = []
+        error = 0.0
+        for index in range(cells + 1):
+            expected = start + spacing * index
+            nearest = min(candidates, key=lambda value: abs(value - expected))
+            distance = abs(nearest - expected)
+            if distance > tolerance:
+                break
+            matched.append(nearest)
+            error += distance
+        if len(matched) == cells + 1 and (
+            best is None or cells > best[0] or (cells == best[0] and error < best[1])
+        ):
+            best = (cells, error, matched)
+
+    return best[2] if best else []
+
+
+def cells_from_boundaries(boundaries: list[int], labels: list[str]) -> list[AxisCell]:
+    return [
+        AxisCell(
+            label=labels[index],
+            center=(left + right) // 2,
+            min=left,
+            max=right,
+        )
+        for index, (left, right) in enumerate(zip(boundaries, boundaries[1:]))
+    ]
+
+
+def detect_image_grid_cells(image: Image.Image, bbox: list[int] | None) -> tuple[list[AxisCell], list[AxisCell]]:
+    if bbox is None:
+        return [], []
+
+    gray = np.asarray(image.convert("L"))
+    dark = gray < 210
+    height, width = dark.shape
+    left, top, right, bottom = bbox
+    band = max(40, int(min(width, height) * 0.035))
+    edge_band = max(24, band // 2)
+
+    x_candidates = []
+    for y0, y1 in (
+        (top - edge_band, top + edge_band),
+        (bottom - edge_band, bottom + edge_band),
+    ):
+        y0 = max(0, y0)
+        y1 = min(height, y1)
+        if y1 > y0:
+            threshold = max(2, int((y1 - y0) * 0.55))
+            x_candidates.extend(
+                position
+                for position in projection_line_positions(dark[y0:y1, :].sum(axis=0), threshold)
+                if left - band <= position <= right + band
+            )
+
+    y_candidates = []
+    for x0, x1 in (
+        (left - edge_band, left + edge_band),
+        (right - edge_band, right + edge_band),
+    ):
+        x0 = max(0, x0)
+        x1 = min(width, x1)
+        if x1 > x0:
+            threshold = max(2, int((x1 - x0) * 0.45))
+            y_candidates.extend(
+                position
+                for position in projection_line_positions(dark[:, x0:x1].sum(axis=1), threshold)
+                if top - band <= position <= bottom + band
+            )
+
+    x_boundaries = regular_boundaries(x_candidates, left, right)
+    y_boundaries = regular_boundaries(y_candidates, top, bottom)
+    column_count = len(x_boundaries) - 1
+    row_count = len(y_boundaries) - 1
+    if column_count < 2 or not 1 <= row_count <= len(ALPHA_LABELS):
+        return [], []
+
+    # ponytail: no OCR here; image-only drawings use the common right-to-left/bottom-up frame convention.
+    columns = cells_from_boundaries(
+        x_boundaries,
+        [str(label) for label in range(column_count, 0, -1)],
+    )
+    rows = cells_from_boundaries(
+        y_boundaries,
+        [chr(ord("A") + index) for index in range(row_count - 1, -1, -1)],
+    )
+    return columns, rows
+
+
 def grid_frame_bbox(columns: list[AxisCell], rows: list[AxisCell], fallback: list[int] | None) -> list[int] | None:
     if columns and rows:
         return [columns[0].min, rows[0].min, columns[-1].max, rows[-1].max]
@@ -360,7 +488,18 @@ def detect_page_grid(
     columns = infer_axis_cells(column_labels, width)
     rows = infer_axis_cells(row_labels, height)
     image_frame = detect_image_frame_bbox(image)
-    source = "pdf_text" if columns and rows else "image_frame_only"
+    image_columns, image_rows = detect_image_grid_cells(image, image_frame) if not (columns and rows) else ([], [])
+    if not columns:
+        columns = image_columns
+    if not rows:
+        rows = image_rows
+    source = (
+        "pdf_text"
+        if column_labels and row_labels
+        else "image_grid"
+        if columns and rows
+        else "image_frame_only"
+    )
     strips = {}
     if artifact_dir and relative_root:
         strips = save_ocr_strips(image, artifact_dir / "ocr_strips", relative_root)
