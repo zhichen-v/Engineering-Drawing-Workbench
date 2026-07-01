@@ -1277,7 +1277,7 @@ function App() {
                 <small>根據目前 OCR 結果輸出</small>
               </div>
               <div className="excel-format-switch" aria-label="Excel 輸出格式">
-                {["MIP", "QC"].map((format) => (
+                {["MIP", "QC", "FB_QC"].map((format) => (
                   <button
                     className={format === excelFormat ? "active" : ""}
                     key={format}
