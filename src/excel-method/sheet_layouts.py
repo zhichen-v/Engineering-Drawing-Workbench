@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from excel_writer import TableLayout
 
 
@@ -124,4 +126,10 @@ QC_LAYOUT = TableLayout(
     symbol_key="feature_lookup",
     symbol_column=3,
     symbol_lookup_sheet="選項",
+)
+
+FB_QC_LAYOUT = replace(
+    QC_LAYOUT,
+    template_data_rows=11,
+    footer_start_row=19,
 )

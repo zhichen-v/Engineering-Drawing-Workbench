@@ -6,11 +6,19 @@ from pathlib import Path
 
 from excel_writer import fill_table_template
 from ocr_parser import build_qc_rows, load_json
-from sheet_layouts import QC_LAYOUT
+from sheet_layouts import FB_QC_LAYOUT, QC_LAYOUT
 from snapshot_excel import snapshot_workbook
 
 
-def run(job_dir, template_path, tolerance_profile_path, output_dir, unit):
+def run(
+    job_dir,
+    template_path,
+    tolerance_profile_path,
+    output_dir,
+    unit,
+    output_format="QC",
+):
+    layout = FB_QC_LAYOUT if output_format == "FB_QC" else QC_LAYOUT
     job_dir = Path(job_dir).resolve()
     template_path = Path(template_path).resolve()
     tolerance_profile_path = Path(tolerance_profile_path).resolve()
@@ -20,7 +28,7 @@ def run(job_dir, template_path, tolerance_profile_path, output_dir, unit):
     if not ocr_path.is_file():
         raise FileNotFoundError(f"OCR result not found: {ocr_path}")
     if not template_path.is_file():
-        raise FileNotFoundError(f"QC template not found: {template_path}")
+        raise FileNotFoundError(f"{output_format} template not found: {template_path}")
     if not tolerance_profile_path.is_file():
         raise FileNotFoundError(
             f"Tolerance profile not found: {tolerance_profile_path}"
@@ -36,22 +44,22 @@ def run(job_dir, template_path, tolerance_profile_path, output_dir, unit):
     )
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    excel_path = output_dir / "QC_filled.xlsm"
-    json_path = output_dir / "QC_fill_result.json"
-    snapshot_path = output_dir / "QC_snapshot.png"
+    excel_path = output_dir / f"{output_format}_filled.xlsm"
+    json_path = output_dir / f"{output_format}_fill_result.json"
+    snapshot_path = output_dir / f"{output_format}_snapshot.png"
 
     fill_table_template(
         template_path,
         output_rows,
         excel_path,
-        QC_LAYOUT,
+        layout,
     )
     snapshot = snapshot_workbook(
         excel_path,
         output_path=snapshot_path,
-        sheet_name=QC_LAYOUT.sheet_name,
-        min_rows=34,
-        min_cols=QC_LAYOUT.last_column,
+        sheet_name=layout.sheet_name,
+        min_rows=35 if output_format == "FB_QC" else 34,
+        min_cols=layout.last_column,
     )
 
     debug = {
@@ -79,15 +87,12 @@ def run(job_dir, template_path, tolerance_profile_path, output_dir, unit):
 
 
 def parse_args(argv=None):
-    repo_root = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(
         description="Fill and snapshot the QC workbook from ocr_results.json."
     )
     parser.add_argument("--job", required=True, help="OCR job output folder.")
-    parser.add_argument(
-        "--template",
-        default=str(repo_root / "template" / "QC.xlsm"),
-    )
+    parser.add_argument("--format", choices=("QC", "FB_QC"), default="QC")
+    parser.add_argument("--template")
     parser.add_argument(
         "--tolerance-profile",
         default=str(Path(__file__).with_name("tolerance_profile.json")),
@@ -114,17 +119,22 @@ def main(argv=None):
     configure_stdout()
     args = parse_args(argv)
     job_dir = Path(args.job)
+    repo_root = Path(__file__).resolve().parents[2]
+    template_path = args.template or repo_root / "template" / (
+        "FB_QC.XLSM" if args.format == "FB_QC" else "QC.xlsm"
+    )
     output_dir = (
         Path(args.output_dir)
         if args.output_dir
-        else job_dir / "excel-output" / "QC"
+        else job_dir / "excel-output" / args.format
     )
     excel_path, json_path, snapshot_path, debug = run(
         job_dir=job_dir,
-        template_path=args.template,
+        template_path=template_path,
         tolerance_profile_path=args.tolerance_profile,
         output_dir=output_dir,
         unit=args.unit,
+        output_format=args.format,
     )
     print(
         json.dumps(
