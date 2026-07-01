@@ -1,6 +1,7 @@
 import io
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import fitz
 from fastapi.testclient import TestClient
@@ -619,6 +620,53 @@ def test_export_job_excel_returns_preview_and_download_urls(tmp_path, monkeypatc
                 "file": f"/output/{job_dir.name}/excel-output/MIP/{sheet}_snapshot.png",
             }
             for sheet in ("MIP", "SUQC", "IPQC", "OGQC")
+        ],
+    }
+
+
+def test_run_excel_job_passes_fb_qc_format(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        return SimpleNamespace(returncode=0, stdout='{"rows": 3}\n', stderr="")
+
+    monkeypatch.setattr(app_module.subprocess, "run", fake_run)
+
+    assert app_module.run_excel_job(tmp_path, "FB_QC") == {"rows": 3}
+    assert Path(captured["command"][1]).name == "fill_QC.py"
+    assert captured["command"][-2:] == ["--format", "FB_QC"]
+
+
+def test_export_job_fb_qc_returns_preview_and_download_urls(tmp_path, monkeypatch):
+    output_dir = tmp_path / "output"
+    job_dir = output_dir / TEST_SESSION_ID / "20260615T120000000Z_drawing"
+    job_dir.mkdir(parents=True)
+    (job_dir / "ocr_results.json").write_text('{"results": []}', encoding="utf-8")
+
+    def fake_run_excel_job(target, output_format):
+        assert target == job_dir
+        assert output_format == "FB_QC"
+        return {"status": "success", "rows": 7}
+
+    monkeypatch.setattr(app_module, "OUTPUT_DIR", output_dir)
+    monkeypatch.setattr(app_module, "run_excel_job", fake_run_excel_job)
+
+    response = create_client().post(
+        f"/api/jobs/{job_dir.name}/excel",
+        json={"format": "FB_QC"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "format": "FB_QC",
+        "rows": 7,
+        "file": f"/output/{job_dir.name}/excel-output/FB_QC/FB_QC_filled.xlsm",
+        "previews": [
+            {
+                "sheet": "OGQC",
+                "file": f"/output/{job_dir.name}/excel-output/FB_QC/FB_QC_snapshot.png",
+            }
         ],
     }
 

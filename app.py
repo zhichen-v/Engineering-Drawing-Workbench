@@ -83,7 +83,7 @@ class FrameDetectionRequest(BaseModel):
 
 
 class ExcelRequest(BaseModel):
-    format: Literal["MIP", "QC"]
+    format: Literal["MIP", "QC", "FB_QC"]
 
 
 def build_job_path(document: str, load_id: str) -> tuple[str, Path]:
@@ -150,12 +150,18 @@ def run_ocr_job(
     )
 
 
-def run_excel_job(job_dir: Path, output_format: Literal["MIP", "QC"]) -> dict[str, object]:
+def run_excel_job(
+    job_dir: Path,
+    output_format: Literal["MIP", "QC", "FB_QC"],
+) -> dict[str, object]:
     script = BASE_DIR / "src" / "excel-method" / (
         "fill_MIP_all.py" if output_format == "MIP" else "fill_QC.py"
     )
+    command = [sys.executable, str(script), "--job", str(job_dir)]
+    if output_format == "FB_QC":
+        command.extend(("--format", "FB_QC"))
     process = subprocess.run(
-        [sys.executable, str(script), "--job", str(job_dir)],
+        command,
         cwd=BASE_DIR,
         capture_output=True,
         text=True,
@@ -492,8 +498,13 @@ def export_job_excel(job_id: str, request: ExcelRequest) -> dict[str, object]:
             for sheet in ("MIP", "SUQC", "IPQC", "OGQC")
         ]
     else:
-        excel_file = f"{output_dir}/QC_filled.xlsm"
-        previews = [{"sheet": "OGQC", "file": f"{output_dir}/QC_snapshot.png"}]
+        excel_file = f"{output_dir}/{request.format}_filled.xlsm"
+        previews = [
+            {
+                "sheet": "OGQC",
+                "file": f"{output_dir}/{request.format}_snapshot.png",
+            }
+        ]
 
     return {
         "format": request.format,
